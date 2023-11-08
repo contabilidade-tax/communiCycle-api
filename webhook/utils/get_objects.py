@@ -1,51 +1,49 @@
+import os
 import time
+from typing import Union
+
+import httpx
+from django.conf import settings
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 
-from contacts.models import CompanyContact, Contact, Pendencies
-from control.models import MessageControl, TicketLink, DASFileGrouping
+from control.models import DASFileGrouping, MessageControl, TicketLink
 from messages_api.models import Message, Ticket
-import httpx
+from webhook.exceptions import ContactNotFound, ObjectNotFound
 
 max_retries = 5
 att_tax = 0.1
+COMPANIES_API = settings.COMPANIES_API
 
 
-def get_company_contact(**kwargs):
-    httpx.get()
-    # retries = 0
-    # while retries < max_retries:
-    #     try:
-    #         contact = get_object_or_404(CompanyContact, **kwargs)
-    #         return contact
-    #     except Http404:
-    #         time.sleep(att_tax)
-    #         retries += 1
-    # return None
+def get_company_contact_by_cnpj(cnpj: Union[str, int], **kwargs):
+    request = httpx.get(f"{COMPANIES_API}/contacts/{cnpj}")
+
+    if request.status_code == 200:
+        return request.json()
+        # return DictAsObject(request.json())
+
+    raise ContactNotFound(f"Contact for {cnpj} not found")
 
 
-def get_contact(**kwargs):
-    retries = 0
-    while retries < max_retries:
-        try:
-            contact = get_object_or_404(Contact, **kwargs)
-            return contact
-        except Http404:
-            time.sleep(att_tax)
-            retries += 1
-    return None
+def get_digisac_contact_by_id(contact_id: str, **kwargs):
+    request = httpx.get(f"{COMPANIES_API}/contacts/digisac/{contact_id}")
+
+    if request.status_code == 200:
+        return request.json()
+        # return DictAsObject(request.json())
+
+    raise ContactNotFound(f"Contact for id:{contact_id} not found")
 
 
-def get_pendencies(**kwargs):
-    retries = 0
-    while retries < max_retries:
-        try:
-            pendencies = get_object_or_404(Pendencies, **kwargs)
-            return pendencies
-        except Http404:
-            time.sleep(0.5)
-            retries += 1
-    return None
+def get_all_contact_by_digisac_id(digisac_id: str, **kwargs):
+    request = httpx.get(f"{COMPANIES_API}/contacts/digisac/all/{digisac_id}")
+
+    if request.status_code == 200:
+        return request.json()
+        # return DictAsObject(request.json())
+
+    raise ContactNotFound(f"Anyone contact for id:{digisac_id} not found")
 
 
 def get_message_control(**kwargs):
@@ -81,7 +79,9 @@ def get_message(**kwargs):
         except Http404:
             time.sleep(att_tax)
             retries += 1
-    return None
+
+    raise ObjectNotFound(f"Anyone message for {kwargs.get('message_id')} not found")
+    # return None
 
 
 def get_ticket(**kwargs):

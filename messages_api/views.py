@@ -1,23 +1,25 @@
-from datetime import datetime as dt
 import time
+from datetime import datetime as dt
+
+from django.db import IntegrityError
 from django.http import Http404
+from django.http.request import HttpRequest
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
-from django.db import IntegrityError
-from django.http.request import HttpRequest
-from rest_framework.response import Response
 from rest_framework.decorators import api_view
+from rest_framework.response import Response
 
-from webhook.utils.logger import Logger
-from messages_api.models import Message, Ticket
 from control.models import MessageControl
-from contacts.models import Contact
 from messages_api.exceptions import NotFoundException
+from messages_api.models import Message, Ticket
 from messages_api.serializer import (
     MessageSerializer,
     TicketSerializer,
     TicketStatusSerializer,
 )
+from webhook.utils.get_objects import get_digisac_contact_by_id
+from webhook.utils.logger import Logger
+from webhook.utils.tools import DictAsObject
 
 # Create your views here.
 logger = Logger(__name__)
@@ -229,37 +231,41 @@ class TicketViewSet(viewsets.ModelViewSet):
             period = dt.now().strftime("%Y-") + period[-2:] + "-" + period[:2]
 
         try:
-            message = Ticket.objects.create(
+            ticket = Ticket.objects.create(
                 ticket_id=ticket_id,
                 period=period,
                 contact_id=contact_id,
                 last_message_id=last_message_id,
             )
-            contact = get_object_or_404(Contact, contact_id=contact_id)
-            contact_number = contact.contact_number
+            contact = get_digisac_contact_by_id(contact_id=contact_id)
+            contact = DictAsObject(contact)
+            # contact = get_object_or_404(Contact, contact_id=contact_id)
+            # contact_number = contact.contact_number
 
             # Check if MessageControl already exists for this contact and period
             try:
                 message_control = MessageControl.objects.get(
-                    contact=contact_number, period=period
+                    digisac_id=contact.digisac_id, period=period
                 )
                 # If it does, create a TicketLink and add the new Ticket to it
                 ticket_link = message_control.get_or_create_ticketlink()
-                ticket_link.append_new_ticket(message)
+                ticket_link.append_new_ticket(ticket)
             except MessageControl.DoesNotExist:
                 # If not, create a new MessageControl
                 message_control = MessageControl.objects.create(
-                    ticket=message, contact=contact_number, period=period
+                    ticket=ticket,
+                    contact_number=contact.contact_number,
+                    digisac_id=contact.digisac_id,
+                    period=period,
                 )
 
         except (IntegrityError, TypeError) as e:
             text = str(e)
-            logger.debug(f"{text}")
             return Response(
                 {f"error {e}": "Something Wrong", "message": text}, status=409
             )
 
-        serializer = TicketSerializer(message)
+        serializer = TicketSerializer(ticket)
         return Response(serializer.data, status=201)
 
     def list(self, request, *args, **kwargs):
