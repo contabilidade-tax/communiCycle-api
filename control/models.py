@@ -1,6 +1,6 @@
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from contacts.models import CompanyContact, Contact
 from messages_api.models import Message, Ticket
 
 # Create your models here.
@@ -130,17 +130,17 @@ class TicketLink(models.Model):
 
 
 class DASFileGrouping(models.Model):
-    contact = models.ForeignKey(
-        Contact, on_delete=models.CASCADE, related_name="das_file_grouping"
-    )
-    companies = models.ManyToManyField(CompanyContact, blank=True)
+    contact_id = models.CharField(max_length=255, null=False)
+    companies = ArrayField(models.CharField(max_length=12, null=True), default=list)
     period = models.DateField()
     was_sent = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Agrupamento de DAS para {self.contact}"
+        return f"Agrupamento de DAS para {self.contact_id}"
 
     def append_new_companie(self, company_contact):
-        if not self.companies.filter(cnpj=company_contact.cnpj).exists():
-            self.companies.add(company_contact)
+        # Assumindo que company_contact é um objeto que possui um atributo cnpj
+        cnpj = company_contact.cnpj
+        if cnpj not in self.companies:
+            self.companies.append(cnpj)
             self.save()

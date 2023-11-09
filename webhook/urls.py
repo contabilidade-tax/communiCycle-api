@@ -25,7 +25,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("webhook", webhook_receiver, name="webhook"),
     path("webhook/messages", include("messages_api.urls")),
-    path("webhook/control", include("control.urls")),
 ]
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 # Adicione esta linha para servir arquivos estáticos durante o desenvolvimento
