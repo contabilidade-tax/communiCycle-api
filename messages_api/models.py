@@ -6,7 +6,7 @@ class Ticket(models.Model):
     period = models.DateField()
     is_open = models.BooleanField(default=True)
     contact_id = models.CharField(max_length=255)
-    last_message_id = models.CharField(max_length=500, default="ndsaujfbnujsafbncuj")
+    last_message_id = models.CharField(max_length=500, null=True)
 
     def __str__(self):
         return f"{self.ticket_id} - {self.period} - {self.is_open}"

@@ -1,3 +1,5 @@
+from django.conf import settings
+
 from control.models import Message, MessageControl, Ticket
 from webhook.exceptions import ObjectNotFound
 from webhook.utils.get_objects import get_ticket
@@ -18,27 +20,28 @@ def check_has_value(anything, error_message=""):
 def create_new_message(**kwargs) -> Message:
     data = DictAsObject(kwargs)
     #
-    contact_number = data.phone
+    contact_number = data.contact_number
     period = data.period
+    message_id = data.message_id
     contact_id = data.contact_id
     status = data.status
-    message_id = data.message_id
     ticket_id = data.ticket
-    #
-    ticket = get_ticket(ticket_id=ticket_id)
     message_type = data.message_type
     isFromMe = data.is_from_me
     text = data.text
     #
+    ticket = get_ticket(ticket_id=ticket_id)
+    #
 
-    check_has_value(ticket, f"Ticket not found: {ticket_id}")
+    if not contact_id in settings.IGNORED_ID_LISTS:
+        check_has_value(ticket, f"Ticket not found: {ticket_id}")
 
     message, created = Message.objects.get_or_create(
+        message_id=message_id,
         contact_id=contact_id,
         contact_number=contact_number,
         period=period,
         status=status,
-        message_id=message_id,
         ticket=ticket,
         message_type=message_type,
         is_from_me=isFromMe,

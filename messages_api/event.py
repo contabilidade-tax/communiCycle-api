@@ -2,8 +2,10 @@ import os
 
 import requests
 from celery import shared_task
+from django.db.utils import IntegrityError
 
 from control.functions import check_client_response
+from messages_api.views import get_valid_ticket
 from webhook.exceptions import ObjectNotCreated
 from webhook.functions.model_obj import (
     create_new_message,
@@ -13,6 +15,7 @@ from webhook.functions.model_obj import (
 from webhook.utils.get_objects import get_message, get_message_control, get_ticket
 from webhook.utils.logger import Logger
 from webhook.utils.tools import (
+    DictAsObject,
     any_digisac_request,
     get_contact_number,
     get_current_period,
@@ -81,16 +84,20 @@ def manage(data):
 def handle_message_created(message_id, isFromMe: bool, data=...):
     message_exists = message_exists_in_digisac(message_id=message_id)
     message_saved = message_is_already_saved(message_id=message_id)
+    obs = ""
+    #
+    if message_exists and message_saved:
+        handle_message_updated(message_id, data=data)
+        return "Mensagem já existe mandada pra atualização"
     #
     contact_id = data.get("contactId")
     date = get_current_period(dtObject=True)
     number = get_contact_number(contact_id=contact_id)
     message_data = {
-        "phone": number,
+        "contact_number": number,
         "period": date,
         "message_id": message_id,
         "contact_id": contact_id,
-        "timestamp": data.get("timestamp"),
         "status": data["data"]["ack"],
         "ticket": data.get("ticketId"),
         "message_type": data.get("type"),
@@ -98,14 +105,12 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
         "text": data.get("text", data.get("type")),
     }
     #
-    if message_exists and message_saved:
-        handle_message_updated(message_id, data=data)
-        return "Mensagem já existe mandada pra atualização"
-    #
     if not data.get("ticketId"):
-        any_digisac_request(f"/messages/{message_id}", method="post")
-        message_data["ticket"] = 1
-
+        # return f"Ticket with ticket_id {data.get('ticketId')} not found."
+        message_digisac = any_digisac_request(f"/messages/{message_id}", method="get")
+        message_digisac = DictAsObject(message_digisac)
+        obs += "ticket pego da API digisac"
+        message_data["ticket"] = message_digisac.ticketId
     # url = f"{WEBHOOK_API}/messages/create"
 
     if number is None:
@@ -113,19 +118,22 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
     # if not isFromMe:
     # response = requests.post(url, json=message_body, params=parameters)
 
-    # try:
-    message = create_new_message(**message_data)
+    try:
+        message = create_new_message(**message_data)
+    except IntegrityError as e:
+        return f"Mensagem criada anteriormente. id:{message_id}"
     # if not isFromMe and not response.status_code in range(400, 501):
     #     check_client_response.apply_async(args=[contact_id])
     if not isFromMe:
         check_client_response.apply_async(args=[contact_id])  # .get(contact_id)
+
+    update_ticket_last_message(ticket_id=data.get("ticketId"))
     # except Exception as e:
     #     raise ObjectNotCreated(
     #         f"Failed to create message_id: {message_id} reason: \n{e}"
     #     )
 
-    update_ticket_last_message(ticket_id=data.get("ticketId"))
-    return "Message Created successfully!"
+    return f"Message Created successfully! OBS:({obs})"
 
 
 # @shared_task(name="update_message")
@@ -150,12 +158,14 @@ def handle_message_updated(message_id, data=...):
         actual_status = get_event_status("message", message_id=message_id)
         # O que está acontecendo aqui?? não entendi o isinstance de tupla
         status = data["ack"][0] if isinstance(data["ack"], tuple) else data.get("ack")
-        if actual_status < status:
-            if message:
+        if message:
+            if actual_status < status:
                 message.status = status
                 message.save()
+            else:
+                return f"Status passado por parâmetro:{status} menor que o atualmente salva na mensagem com id: {message_id}"
         else:
-            return f"Status passado por parâmetro:{status} menor que o atualmente salva na mensagem com id: {message_id}"
+            return f"Message with id {message_id} not found."
 
     except Exception as e:
         raise Exception(
@@ -211,7 +221,7 @@ def handle_ticket_updated(ticket_id, data=...):
     is_open = data.get("isOpen")
 
     if actual_status and not is_open:
-        ticket = get_ticket(ticket_id=ticket_id)
+        ticket = get_valid_ticket(ticket_id=ticket_id)
 
         try:
             if ticket:

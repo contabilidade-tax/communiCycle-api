@@ -80,8 +80,17 @@ def get_message(**kwargs):
             time.sleep(att_tax)
             retries += 1
 
-    raise ObjectNotFound(f"Anyone message for {kwargs.get('message_id')} not found")
-    # return None
+    return None
+    # raise ObjectNotFound(f"Anyone message for {kwargs.get('message_id')} not found")
+
+
+def get_valid_ticket(ticket_id):
+    while True:
+        try:
+            ticket = get_object_or_404(Ticket, ticket_id=ticket_id)
+            return ticket
+        except Http404:
+            time.sleep(0.5)
 
 
 def get_ticket(**kwargs):

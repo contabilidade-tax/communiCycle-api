@@ -47,6 +47,7 @@ is_local_machine()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+IGNORED_ID_LISTS = ["4bf3c03a-2d33-439c-8b13-efb50531e9c1"]
 COMPANIES_API = os.environ.get("COMPANIES_API", os.getenv("COMPANIES_API"))
 
 # Quick-start development settings - unsuitable for production
