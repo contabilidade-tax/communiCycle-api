@@ -1,16 +1,27 @@
 import os
+
 import requests
 from celery import shared_task
+from django.db.utils import IntegrityError
 
 from control.functions import check_client_response
-from webhook.utils.get_objects import get_message, get_ticket
+from messages_api.views import get_valid_ticket
+from webhook.exceptions import ObjectNotCreated
+from webhook.functions.model_obj import (
+    create_new_message,
+    create_new_message_control,
+    create_new_ticket,
+)
+from webhook.utils.get_objects import get_message, get_message_control, get_ticket
 from webhook.utils.logger import Logger
 from webhook.utils.tools import (
-    get_event_status,
-    message_is_saved,
-    get_current_period,
+    DictAsObject,
+    any_digisac_request,
     get_contact_number,
+    get_current_period,
+    get_event_status,
     message_exists_in_digisac,
+    message_is_already_saved,
     update_ticket_last_message,
 )
 
@@ -26,114 +37,139 @@ WEBHOOK_API = load_env("WEBHOOK_API_LOCAL") if IS_LOCALHOST else load_env("WEBHO
 
 
 ##-- Handler to events
-@shared_task(name="handler_task")
+# @shared_task(name="handler_task")
 def manage(data):
+    # Handlers de evento normalmente serão síncronos. Porém em casos específicos
+    # alguns serão mandados para background.
+    # Ex: quando um novo ticket é criado, ou uma mensagem é enviada
     event_handlers = {
         "message.created": (handle_message_created, ["id", "isFromMe"]),
         "message.updated": (handle_message_updated, ["id"]),
         "ticket.created": (handle_ticket_created, ["id", "contactId", "lastMessageId"]),
         "ticket.updated": (handle_ticket_updated, ["id"]),
     }
-
+    # Aqui eu consigo filtrar os eventos que serão mandados para background
+    event_will_apply_async = [handle_message_created, handle_ticket_created]
+    #
     event = data.get("event")
     data = data.get("data")
+    #
     event_handler_func, params = event_handlers.get(event, (None, []))
-
+    #
     try:
-        if (event == "message.created") and data.get("type", None) == "ticket":
+        if (event == "message.created") and data.get("type") == "ticket":
             return f"Event: {event} has ticket type, avoiding to prevent message.created error"
     except AttributeError:
         return f"Event: {event} has some bug"
-
+    #
     if event_handler_func:
         args = [data.get(param) for param in params]
 
-        event_handler_func.apply_async(args=args, kwargs={"data": data})
+        if any(
+            [
+                event_async == event_handler_func
+                for event_async in event_will_apply_async
+            ]
+        ):
+            event_handler_func.apply_async(args=args, kwargs={"data": data})
 
-    return f"Event: {event} handled to the refers function"
+        # Setando qualquer outro evento normalmente como sincrono
+        event_handler_func(*args, data=data)
+
+    return f"Event: {event} handled to the function {event_handler_func.__name__}"
 
 
 ##-- Tasks to handle events
 @shared_task(name="create_message")
-def handle_message_created(message_id, isFromMe, data=...):
+def handle_message_created(message_id, isFromMe: bool, data=...):
     message_exists = message_exists_in_digisac(message_id=message_id)
-    message_saved = message_is_saved(message_id=message_id)
-
+    message_saved = message_is_already_saved(message_id=message_id)
+    obs = ""
+    #
     if message_exists and message_saved:
-        handle_message_updated.apply_async(args=[message_id], kwargs={"data": data})
+        handle_message_updated(message_id, data=data)
         return "Mensagem já existe mandada pra atualização"
-
-    url = f"{WEBHOOK_API}/messages/create"
-
+    #
     contact_id = data.get("contactId")
-    date = get_current_period()
+    date = get_current_period(dtObject=True)
     number = get_contact_number(contact_id=contact_id)
-    parameters = {"phone": number, "period": date}
-    message_type = data.get("type")
-    message_body = {
+    message_data = {
+        "contact_number": number,
+        "period": date,
         "message_id": message_id,
         "contact_id": contact_id,
-        "timestamp": data.get("timestamp"),
         "status": data["data"]["ack"],
         "ticket": data.get("ticketId"),
         "message_type": data.get("type"),
         "is_from_me": isFromMe,
-        "text": data.get("text", message_type),
+        "text": data.get("text", data.get("type")),
     }
+    #
+    if not data.get("ticketId"):
+        # return f"Ticket with ticket_id {data.get('ticketId')} not found."
+        message_digisac = any_digisac_request(f"/messages/{message_id}", method="get")
+        message_digisac = DictAsObject(message_digisac)
+        obs += "ticket pego da API digisac"
+        message_data["ticket"] = message_digisac.ticketId
+    # url = f"{WEBHOOK_API}/messages/create"
 
     if number is None:
-        raise ValueError(
-            f"Consulta do telefone:{number} na {url} com id {contact_id} falhou"
-        )
+        raise ValueError(f"Consulta do telefone:{number} com id {contact_id} falhou")
     # if not isFromMe:
-    response = requests.post(url, json=message_body, params=parameters)
+    # response = requests.post(url, json=message_body, params=parameters)
+
+    try:
+        message = create_new_message(**message_data)
+    except IntegrityError as e:
+        return f"Mensagem criada anteriormente. id:{message_id}"
+    # if not isFromMe and not response.status_code in range(400, 501):
+    #     check_client_response.apply_async(args=[contact_id])
+    if not isFromMe:
+        check_client_response.apply_async(args=[contact_id])  # .get(contact_id)
 
     update_ticket_last_message(ticket_id=data.get("ticketId"))
+    # except Exception as e:
+    #     raise ObjectNotCreated(
+    #         f"Failed to create message_id: {message_id} reason: \n{e}"
+    #     )
 
-    if not isFromMe and not response.status_code in range(400, 501):
-        check_client_response.apply_async(args=[contact_id])
-
-    if response.status_code == 409:
-        return "Esta mensagem já existe por algum motivo chegou até aqui novamente. Verifique os logs"
-
-    if response.status_code != 201:
-        text = (
-            f"Failed to create message_id: {message_id}\n{response}-\n{response.text}"
-        )
-        raise ValueError(text)
-
-    return response
+    return f"Message Created successfully! OBS:({obs})"
 
 
-@shared_task(name="update_message")
+# @shared_task(name="update_message")
 def handle_message_updated(message_id, data=...):
     if not message_id:
         return "Message vazio. diabo é isso?"
 
     message_exists = message_exists_in_digisac(message_id=message_id)
-    message_saved = message_is_saved(message_id)
+    message_saved = message_is_already_saved(message_id)
 
+    # manda pra criação se a mensagem ainda não existir
     if message_exists and not message_saved:
-        handle_message_created.apply_async(
-            args=[message_id, data.get("isFromMe")], kwargs={"data": data}
-        )
+        # REMOVE ASYNC DO EVENT HANDLER
+        args = [message_id, data.get("isFromMe")]
+        handle_message_created.apply_async(args=args, kwargs={"data": data})
+        # handle_message_created(*args, data=data)
         return "Mensagem existe e não foi salva antes"
+
     try:
         data = data.get("data")
         message = get_message(message_id=message_id)
         actual_status = get_event_status("message", message_id=message_id)
+        # O que está acontecendo aqui?? não entendi o isinstance de tupla
         status = data["ack"][0] if isinstance(data["ack"], tuple) else data.get("ack")
-        if actual_status < status:
-            if message:
+        if message:
+            if actual_status < status:
                 message.status = status
                 message.save()
+            else:
+                return f"Status passado por parâmetro:{status} menor que o atualmente salva na mensagem com id: {message_id}"
         else:
-            return f"Status:{status} menor que o atual da mensagem com id: {message_id}"
+            return f"Message with id {message_id} not found."
 
     except Exception as e:
-        logger.debug(e)
         raise Exception(
-            f"erro: {str(e)} - actual_staus:{type(actual_status)} e status = {type(status)}"
+            f"erro: {str(e)} - actual_status:{type(actual_status)} e status = {type(status)}"
         )
 
     return "Mensagem atualizada com sucesso"
@@ -141,33 +177,51 @@ def handle_message_updated(message_id, data=...):
 
 @shared_task(name="create_ticket")
 def handle_ticket_created(ticket_id, contact_id, last_message_id, data=...):
-    url = f"{WEBHOOK_API}/messages/create/ticket"
-    params = {
+    # url = f"{WEBHOOK_API}/messages/create/ticket"
+    ticket_data = {
         "id": ticket_id,
-        "period": get_current_period(),
+        "period": get_current_period(dtObject=True),
         "contact": contact_id,
         "last_message": last_message_id,
     }
 
-    response = requests.post(url, params=params)
-    if response.status_code != 201:
-        text = (
-            f"Failed to create ticket with id: {ticket_id}\n{response}-{response.text}"
+    # response = requests.post(url, params=params)
+    # try:
+    ticket, ticket_created = create_new_ticket(**ticket_data)
+    contact = get_contact_number(contact_id=contact_id)
+
+    message_control = get_message_control(
+        digisac_id=contact_id,
+        period=get_current_period(dtObject=True),
+    )
+
+    if not message_control:
+        message_control = create_new_message_control(
+            ticket=ticket,
+            contact_number=contact,
+            digisac_id=contact_id,
+            period=get_current_period(dtObject=True),
         )
-        logger.debug(text)
-        return text
 
-    return response
+        return "ticket e message_control criados com sucesso"
+
+    ticket_link = message_control.get_or_create_ticketlink()
+    ticket_link.append_new_ticket(ticket)
+
+    return "ticket adicionado com sucesso"
+
+    # except Exception as e:
+    # raise ObjectNotCreated(f"\nFailed to create ticket with id: {ticket_id}\n{e}")
 
 
-@shared_task(name="update_ticket")
+# @shared_task(name="update_ticket")
 def handle_ticket_updated(ticket_id, data=...):
     actual_status = get_event_status("ticket", ticket_id=ticket_id)
     last_message_id = data.get("lastMessageId")
     is_open = data.get("isOpen")
 
     if actual_status and not is_open:
-        ticket = get_ticket(ticket_id=ticket_id)
+        ticket = get_valid_ticket(ticket_id=ticket_id)
 
         try:
             if ticket:

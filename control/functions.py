@@ -7,15 +7,17 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from control.models import DASFileGrouping
+from webhook.exceptions import ObjectNotFound
 from webhook.utils.get_objects import (
-    get_company_contact,
-    get_contact,
+    get_company_contact_by_cnpj,
+    get_digisac_contact_by_id,
     get_message_control,
 )
 from webhook.utils.logger import Logger
 from webhook.utils.text import Answers, BaseText
 from webhook.utils.text import TransferTicketReasons as Reasons
 from webhook.utils.tools import (
+    DictAsObject,
     any_digisac_request,
     get_contact_number,
     get_current_period,
@@ -109,18 +111,18 @@ def process_input(
         and not chat_confirmed
         and not is_match(sentence, NEGATIVE_RESPONSES, exact_match)
     ):
-        if pendencies:
-            send_message(contact_id, text=Answers.PENDENCIES_SEND_CONFIRMED.value)
-            get_contact_pendencies_and_send.apply_async(args=[contact_id])
-            confirm_message.apply_async(
-                args=[contact_id], kwargs={"closeTicket": False}
-            )
+        # if pendencies:
+        #     send_message(contact_id, text=Answers.PENDENCIES_SEND_CONFIRMED.value)
+        #     get_contact_pendencies_and_send.apply_async(args=[contact_id])
+        #     confirm_message.apply_async(
+        #         args=[contact_id], kwargs={"closeTicket": False}
+        #     )
 
-            return "Cliente solicitou os arquivos"
+        #     return "Cliente solicitou os arquivos"
 
-        else:
-            send_message(contact_id, text=Answers.MESSAGE_CONFIRMED.value)
-            confirm_message.apply_async(args=[contact_id])
+        # else:
+        send_message(contact_id, text=Answers.MESSAGE_CONFIRMED.value)
+        confirm_message.apply_async(args=[contact_id])
 
         return "Atendimento encerrado com sucesso!"
 
@@ -174,10 +176,10 @@ def generate_error_message(retries, pendencies) -> str:
 
 ##-- Manage message states
 def get_control_object(contact_id):
-    contact_number = get_contact_number(contact_id, only_number=True)
-    period = dt.strptime(get_current_period(), "%m/%y").strftime("%Y-%m-%d")
+    # contact_number = get_contact_number(contact_id, only_number=True)
+    period = get_current_period(dtObject=True)
 
-    control = get_message_control(contact=contact_number, period=period)
+    control = get_message_control(digisac_id=contact_id, period=period)
 
     return control
 
@@ -229,6 +231,9 @@ def switch_client_needs_help(contact_id, boolean):
 @shared_task(name="check_response")
 def check_client_response(contact_id):
     control = get_control_object(contact_id=contact_id)
+
+    if not control:
+        raise ObjectNotFound("MessageControl not found")
 
     # Se a última mensagem é do sistema, então retorna diretamente
     if control.is_from_me_last_message():
@@ -298,13 +303,14 @@ def confirm_message(contact_id, closeTicket=True, timeout=30):
 
 @shared_task(name="transfer-ticket")
 def transfer_ticket(contact_id, motivo=None):
-    contact = get_contact(contact_id=contact_id)
+    contact = get_digisac_contact_by_id(contact_id=contact_id)
+    contact = DictAsObject(contact)
     message_control = get_control_object(contact_id=contact_id)
 
-    motivo_str = f"\n\nMotivo: {motivo}" if motivo is not None else ""
+    motivo_str = f"\n\nMotivo: {motivo}" if motivo else ""
     send_message(
         WOZ_GROUP_ID,
-        text=f"O cliente: {contact.name}\nSOLICITA ATENDIMENTO{motivo_str}\n\nProtocolo: {message_control.get_protocol_number()}",
+        text=f"O cliente: {contact.responsible_name}\nSOLICITA ATENDIMENTO{motivo_str}\n\nProtocolo: {message_control.get_protocol_number()}",
     )
 
     return "Solicitação de atendimento enviada para o grupo WOZ - RELATÓRIOS"
@@ -322,36 +328,37 @@ def update_ticket_control_pendencies(contact_id, pendencies):
 
 @shared_task(name="send-pendencies")
 def get_contact_pendencies_and_send(contact_id):
-    try:
-        contact = get_contact(contact_id=contact_id)
-        pendencies_list = contact.get_pendencies()
+    ...
+    # try:
+    #     contact = get_contact(contact_id=contact_id)
+    #     pendencies_list = contact.get_pendencies()
 
-        if len(pendencies_list) > 5:
-            send_message(
-                contact_id,
-                text=Answers.get_text_with_replace(
-                    "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
-                ),
-            )
-            transfer_ticket.apply_async(
-                args=[contact_id],
-                kwargs={
-                    "motivo": Reasons.get_text_with_replace(
-                        "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
-                    )
-                },
-            )
+    #     if len(pendencies_list) > 5:
+    #         send_message(
+    #             contact_id,
+    #             text=Answers.get_text_with_replace(
+    #                 "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
+    #             ),
+    #         )
+    #         transfer_ticket.apply_async(
+    #             args=[contact_id],
+    #             kwargs={
+    #                 "motivo": Reasons.get_text_with_replace(
+    #                     "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
+    #                 )
+    #             },
+    #         )
 
-            return "número de pendencias maior que 5, atendente solicitado"
+    #         return "número de pendencias maior que 5, atendente solicitado"
 
-        for pendencie in pendencies_list:
-            competence = pendencie.period.strftime("%B/%m")
-            send_files(contact.contact_id, competence, pendencie.pdf)
+    #     for pendencie in pendencies_list:
+    #         competence = pendencie.period.strftime("%B/%m")
+    #         send_files(contact.contact_id, competence, pendencie.pdf)
 
-        close_ticket.apply_async(args=[contact_id])
-        return "pendencias enviadas ao cliente com sucesso"
-    except Exception as e:
-        return e
+    #     close_ticket.apply_async(args=[contact_id])
+    #     return "pendencias enviadas ao cliente com sucesso"
+    # except Exception as e:
+    #     return e
 
 
 ##-- Addtional views
@@ -359,7 +366,7 @@ def get_contact_pendencies_and_send(contact_id):
 def init_app(request):
     try:
         cnpj = request.query_params.get("cnpj")
-        company_contact = get_company_contact(cnpj=cnpj)
+        company_contact = get_digisac_contact_by_id(cnpj=cnpj)
 
         if not company_contact:
             raise FileNotFoundError("Company Contact não existe")
@@ -446,9 +453,9 @@ def send_groupinf_of_das(request):
 
 @api_view(["POST"])
 def send_message_to_client(request):
-    contact_number = request.query_params.get("phone")
+    contact_number = request.query_params.get("cnpj")
     text = request.data.get("text")
-    contact = get_contact(contact_number=contact_number)
+    contact = get_company_contact_by_cnpj(contact_number=contact_number)
 
     text = (
         """

@@ -1,13 +1,13 @@
 from datetime import datetime as dt
-from django.db import IntegrityError
 
+from django.db import IntegrityError
 from rest_framework import viewsets
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from contacts.models import CompanyContact, Contact
 from contacts.serializer import CompanyContactSerializer
-from contacts.models import Contact, CompanyContact
-from webhook.utils.get_objects import get_company_contact
+from webhook.utils.get_objects import get_digisac_contact_by_id
 from webhook.utils.logger import Logger
 
 # Create your views here.
@@ -57,7 +57,7 @@ class ContactViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            company_contact = get_company_contact(
+            company_contact = get_digisac_contact_by_id(
                 cnpj=cnpj, establishment_id=establishment_id
             )
 
@@ -132,7 +132,7 @@ class ContactViewSet(viewsets.ModelViewSet):
 def update_contact(request):
     cnpj = request.query_params.get("cnpj")
     name = request.query_params.get("name")
-    company_contact = get_company_contact(cnpj=cnpj)
+    company_contact = get_digisac_contact_by_id(cnpj=cnpj)
 
     if not (cnpj or name):
         return Response("CNPJ & name must be present in update request", status=400)

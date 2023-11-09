@@ -11,15 +11,44 @@ https://docs.djangoproject.com/en/4.1/ref/settings/
 """
 
 import os
+import socket
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def is_local_machine() -> bool:
+    def handle_env_file(is_localhost: bool):
+        with open(".env", "r") as f:
+            lines = f.readlines()
+        with open(".env", "w") as file:
+            for line in lines:
+                if line.startswith("IS_LOCALHOST"):
+                    file.write(f"IS_LOCALHOST={is_localhost}\n")
+                else:
+                    file.write(line)
+
+    host_name = socket.gethostname()
+    is_localhost = host_name in ("localhost", "127.0.0.1", "docker", "servidor")
+    if is_localhost:
+        handle_env_file(True)
+    else:
+        handle_env_file(False)
+
+    print("IS_LOCALHOST", is_localhost, f"from host: {host_name}")
+
+
+# Verifica se a máquina é local
+is_local_machine()
+
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+IGNORED_ID_LISTS = ["4bf3c03a-2d33-439c-8b13-efb50531e9c1"]
+COMPANIES_API = os.environ.get("COMPANIES_API", os.getenv("COMPANIES_API"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/
@@ -47,7 +76,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "drf_yasg",
     "rest_framework",
-    "example",
     "messages_api",
     "contacts",
     "celery",

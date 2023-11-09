@@ -1,10 +1,14 @@
+import enum
 import os
 import socket
-from httpx import get, Client
-from datetime import datetime as dt, timedelta
-from dotenv import load_dotenv
+from datetime import datetime as dt
+from datetime import timedelta
+from typing import Union
 
-from webhook.utils.get_objects import get_ticket, get_message
+from dotenv import load_dotenv
+from httpx import Client, get
+
+from webhook.utils.get_objects import get_digisac_contact_by_id, get_message, get_ticket
 from webhook.utils.logger import Logger
 
 load_dotenv()
@@ -13,8 +17,15 @@ load_dotenv()
 logger = Logger(__name__)
 
 
+class request_methods(enum.Enum):
+    get = "get"
+    post = "post"
+
+
 ##-- Digisac requests
-def any_digisac_request(url, body=None, method=get, json=True):
+def any_digisac_request(
+    url, body=None, method: Union[request_methods, str] = request_methods.get, json=True
+):
     header = {
         "Authorization": f"Bearer {os.environ.get('TOKEN_API', os.getenv('TOKEN_API'))}",
         "Content-Type": "application/json",
@@ -53,9 +64,8 @@ def get_chat_protocol(ticketId):
 
 ##--Contact utils
 def get_contact_number(contact_id: str, only_number=False):
-    from webhook.utils.get_objects import get_contact
-
-    contact = get_contact(contact_id=contact_id)
+    contact = get_digisac_contact_by_id(contact_id=contact_id)
+    contact = DictAsObject(contact)
 
     if contact:
         if not only_number:
@@ -66,7 +76,7 @@ def get_contact_number(contact_id: str, only_number=False):
     return None
 
 
-def get_current_period(file_name=False, dtime=False) -> str:
+def get_current_period(file_name=False, dtime=False, dtObject=False) -> str:
     if file_name:
         return (
             (dt.today().replace(day=1) - timedelta(days=1))
@@ -76,6 +86,9 @@ def get_current_period(file_name=False, dtime=False) -> str:
 
     if dtime:
         return dt.today()
+
+    if dtObject:
+        return dt.now().date().strftime("%Y-%m-%d")
 
     return dt.today().strftime("%m/%y")
 
@@ -122,7 +135,7 @@ def update_ticket_last_message(ticket_id: str):
 
             return "Show Papai. Atualizado!!"
         except Exception as e:
-            raise ValueError(f"Algo de errado não está certo - {ticket_id}/{str(e)}")
+            raise ValueError(f"Algo de errado não está certo - {e}")
 
     return "Nada foi feito! Ticket provavelmente ainda não foi criado"
 
@@ -136,7 +149,7 @@ def message_exists_in_digisac(message_id):
         return False
 
 
-def message_is_saved(message_id) -> bool:
+def message_is_already_saved(message_id) -> bool:
     # Esse método retorna None se não encontrar o objeto, logo num if qualquer resposta
     # não deverá ter problema
     message = get_message(message_id=message_id)
@@ -152,3 +165,10 @@ def group_das_to_send(contact, company_contact, period):
     )
 
     grouping.append_new_companie(company_contact)
+
+
+class DictAsObject:
+    def __init__(self, dictionary):
+        for key in dictionary:
+            # Aqui garantimos que somente as chaves existentes no dicionário sejam atribuídas
+            setattr(self, key, dictionary[key])
