@@ -521,16 +521,28 @@ def check_visualized(request):
         companies_not_confirmed = []
 
         for mc in message_control_list:
-            contact = get_contact(contact_number=mc.contact)
-            company_contacts = contact.company_contacts.all()
-            companies = [
-                f"{company_contact.cnpj} - {company_contact.company_name}"
-                for company_contact in company_contacts
+            # contact = get_digisac_contact_by_id(contact_id=mc.contact_id)
+            # Pega a lista com dicionários das empresas
+            company_contacts = get_all_companies_by_digisac_contact(
+                digisac_id=mc.digisac_id
+            )
+            # converte cada empresa em "objeto" pra poder acessar os atributos
+            company_contacts = [
+                DictAsObject(company_obj) for company_obj in company_contacts
             ]
+            # Pega os nomes e cnpj das empresas
+            # usando os obj dentro do array anterior
+            companies = []
+            for company_contact_data in company_contacts:
+                company = DictAsObject(company_contact_data.company)
+                contact = DictAsObject(company_contact_data.contact)
+                # Então adiciono ao array contendo os dados do contato
+                # nome e cnpj
+                companies.append(f"{company.fantasy_name}-{company.cnpj_cpf}")
 
             confirm_message.apply_async(
                 kwargs={
-                    "contact_id": contact.contact_id,
+                    "contact_id": mc.digisac_id,
                     "closeTicket": True,
                     "timeout": 30,
                 }
@@ -539,7 +551,8 @@ def check_visualized(request):
             mc.status = 1
             mc.save()
 
-            companies_not_confirmed += companies  # Apenas adicione as empresas à lista
+            # Apenas adicione as empresas à lista geral
+            companies_not_confirmed += companies
 
         # Início da mensagem
         report_message = "MEI's SEM CONFIRMAÇÃO DE RECEBIMENTO DAS:\n\n"  # Dois espaços em branco após a frase inicial
@@ -564,6 +577,8 @@ def check_visualized(request):
         # Aumenta o contador de checagem
         mc.check_count += 1
 
+        # Se a mensagem enviada foi visualizada, fecha o ticket
+        # e encerra o atendimento do contato
         if mc.last_message_visualized():
             message_controls_visualized.append(mc)
         else:
@@ -572,18 +587,16 @@ def check_visualized(request):
     # Agora, message_controls_visualized contém os objetos onde last_message_visualized é True
     # e message_controls_not_visualized contém os objetos onde last_message_visualized é False
     for mc in message_controls_visualized:
-        contact = get_contact(contact_number=mc.contact)
         confirm_message.apply_async(
             kwargs={
-                "contact_id": contact.contact_id,
+                "contact_id": mc.digisac_id,
                 "closeTicket": True,
                 "timeout": 30,
             }
         )
     for mc in message_controls_not_visualized:
-        contact = get_contact(contact_number=mc.contact)
         send_message(
-            contact.contact_id,
+            mc.digisac_id,
             text="Olá, preciso que visualize ou confirme a mensagem para encerrar este envio.",
         )
 
