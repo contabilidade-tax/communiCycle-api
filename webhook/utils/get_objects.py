@@ -122,7 +122,7 @@ def get_valid_ticket(ticket_id):
 
 def get_ticket(**kwargs):
     retries = 0
-    while retries < max_retries:
+    while retries <= max_retries:
         try:
             ticket = get_object_or_404(Ticket, **kwargs)
             return ticket
@@ -133,12 +133,9 @@ def get_ticket(**kwargs):
 
 
 def get_das_grouping(**kwargs):
-    retries = 0
-    while retries < max_retries:
+    while True:
         try:
             grouping = get_object_or_404(DASFileGrouping, **kwargs)
             return grouping
         except Http404:
             time.sleep(att_tax)
-            retries += 1
-    return None

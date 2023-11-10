@@ -41,7 +41,7 @@ def create_new_message(**kwargs) -> Message:
     isFromMe = data.is_from_me
     text = data.text
     #
-    ticket = get_valid_ticket(ticket_id=ticket_id)
+    ticket = get_ticket(ticket_id=ticket_id)
     #
 
     if not ticket:
@@ -99,12 +99,12 @@ def create_new_message_control(ticket: Ticket, **kwargs) -> MessageControl:
 
 def create_new_pdf_file(cnpj, company_name, file, grouping) -> Ticket:
     try:
-        pdf = file
         cnpj = cnpj
-        company_name = company_name
         grouping = grouping
         #
-        pdf_file = PdfFile.objects.create(grouping=grouping, cnpj=cnpj, pdf=pdf)
+        pdf_file = PdfFile.objects.create(
+            grouping=grouping, company_name=company_name, cnpj=cnpj, file=file
+        )
         #
         return pdf_file
     except IntegrityError as e:

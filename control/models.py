@@ -154,8 +154,10 @@ class DASFileGrouping(models.Model):
 class PdfFile(models.Model):
     cnpj = models.CharField(max_length=255, primary_key=False)
     company_name = models.CharField(max_length=255, default="NOME DA EMPRESA")
-    pdf = models.TextField()
-    grouping = models.ForeignKey(DASFileGrouping, on_delete=models.CASCADE)
+    file = models.TextField()
+    grouping = models.ForeignKey(
+        DASFileGrouping, on_delete=models.CASCADE, related_name="pdfs"
+    )
 
     def __str__(self):
         return f"PDF of: {self.grouping}"

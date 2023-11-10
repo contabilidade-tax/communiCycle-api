@@ -8,12 +8,13 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from control.models import DASFileGrouping
-from webhook.exceptions import ObjectNotFound, UserBadRequest
+from webhook.exceptions import ContactNotFound, ObjectNotFound, UserBadRequest
 from webhook.functions.model_obj import create_new_pdf_file
 from webhook.utils.get_objects import (
     get_all_companies_by_digisac_contact,
     get_company_contact_by_cnpj,
     get_company_name_by_id,
+    get_das_grouping,
     get_digisac_contact_by_id,
     get_message_control,
 )
@@ -371,6 +372,24 @@ def process_init_app():
     ...
 
 
+# @shared_task(name="process_grouping_das")
+def process_grouping_das(grouping_id, contact, files_to_send):
+    grouping = get_das_grouping(id=grouping_id)
+    # Inicio do processo de envio
+    send_message(contact, text=SAUDACAO_TEXT)
+    # Envia cada pdf para o contato
+    for name, pdf in files_to_send:
+        send_message(contact, file=pdf, text=name)
+    # Envia a mensagem de disclaimer
+    send_message(contact, text=DISCLAIMER_TEXT)
+
+    # Atualiza que o grupamento já foi enviado esse mês
+    grouping.was_sent = True
+    grouping.save()
+
+    return f"Enviado para {files_to_send[0]}"
+
+
 # TODO PENDENCIES IN WOZ
 ##-- Addtional views
 @api_view(["GET"])
@@ -382,7 +401,9 @@ def init_app(request):
         cnpj = request.query_params.get("cnpj")
         company_contact = DictAsObject(get_company_contact_by_cnpj(cnpj=cnpj))
         digisac_contact = DictAsObject(company_contact.digisac_contact)
-        company_name = get_company_name_by_id(company_contact.company)
+        company_name = DictAsObject(
+            get_company_name_by_id(company_contact.company)
+        ).fantasy_name
         # AGORA Pego quantas empresas o contato tem atrelado a ele
         companies_by_contact = get_all_companies_by_digisac_contact(
             digisac_contact.digisac_id
@@ -397,11 +418,11 @@ def init_app(request):
 
         if len(companies_by_contact) > 1:
             grouping = group_das_to_send(
-                digisac_contact.contact_number,
+                digisac_contact.digisac_id,
                 cnpj,
                 get_current_period(dtime=True),
             )
-            pdf_file = create_new_pdf_file(cnpj, file, grouping)
+            pdf_file = create_new_pdf_file(cnpj, company_name, file, grouping)
 
             return Response({"success": "Contato responsável por mais de uma empresa"})
 
@@ -426,7 +447,7 @@ def init_app(request):
         send_message(digisac_contact.digisac_id, text=DISCLAIMER_TEXT)
         return Response({"success": "message_sent"})
 
-    except UserBadRequest as e:
+    except (UserBadRequest, ContactNotFound) as e:
         return Response({"error": "Bad Request", "message": str(e)}, status=400)
     except Exception as e:
         return Response(
@@ -442,24 +463,17 @@ def send_groupinf_of_das(request):
     if grouping_list:
         for grouping in grouping_list:
             files_to_send = [
-                (company.company_name, company.pdf)
-                for company in grouping.companies.all()
+                (pdf_file_grouping.company_name, pdf_file_grouping.file)
+                for pdf_file_grouping in grouping.pdfs.all()
             ]
-            contact = grouping.contact
-
-            send_message(contact.contact_id, text=SAUDACAO_TEXT)
-            for name, pdf in files_to_send:
-                send_message(contact.contact_id, file=pdf, text=f"{name}")
-
-            send_message(contact.contact_id, text=DISCLAIMER_TEXT)
-
-            # Atualiza que o grupamento já foi enviado esse mês
-            grouping.was_sent = True
-            grouping.save()
+            contact = grouping.contact_id
+            # Enviando os arquivos para o contato
+            process_grouping_das.apply_async(args=[grouping.id, contact, files_to_send])
+            # process_grouping_das(grouping.id, contact, files_to_send)
 
         return Response(
             {
-                "success": f"{len(grouping_list)} contatos responsáveis por mais que uma empresa receberam os arquivos"
+                "success": f"{len(grouping_list)} contatos responsáveis por mais que uma empresa receberão os arquivos. Por favor, aguarde o fim da tarefa de envio..."
             }
         )
 

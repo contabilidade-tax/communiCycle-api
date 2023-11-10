@@ -37,10 +37,10 @@ def any_digisac_request(
         base_url=os.environ.get("API_URL", os.getenv("API_URL")), headers=header
     ) as client:
         if method == "get":
-            get_response: get = client.get(url)
+            get_response: get = client.get(url, timeout=6000)
             return get_response.json() if json else get_response
         if method == "post":
-            response = client.post(url, json=body)
+            response = client.post(url, json=body, timeout=6000)
             if response.status_code == 200:
                 return response.json() if json else response
             else:
