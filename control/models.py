@@ -1,6 +1,6 @@
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from contacts.models import CompanyContact, Contact
 from messages_api.models import Message, Ticket
 
 # Create your models here.
@@ -18,6 +18,12 @@ class MessageControl(models.Model):
     client_needs_help = models.BooleanField(default=False)
     retries = models.IntegerField(default=1)
     check_count = models.IntegerField(default=0)
+
+    def get_all_ticket_ids(self):
+        lista = []
+        lista.append(self.ticket.ticket_id)
+        lista.extend(self.get_ticket_link().additional_tickets)
+        return lista
 
     def last_message_visualized(self):
         ticket_link = self.get_ticket_link()
@@ -130,17 +136,32 @@ class TicketLink(models.Model):
 
 
 class DASFileGrouping(models.Model):
-    contact = models.ForeignKey(
-        Contact, on_delete=models.CASCADE, related_name="das_file_grouping"
-    )
-    companies = models.ManyToManyField(CompanyContact, blank=True)
+    contact_id = models.CharField(max_length=255, null=False)
+    companies = ArrayField(models.CharField(max_length=12, null=True), default=list)
     period = models.DateField()
     was_sent = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Agrupamento de DAS para {self.contact}"
+        return f"Agrupamento de DAS para {self.contact_id}"
 
-    def append_new_companie(self, company_contact):
-        if not self.companies.filter(cnpj=company_contact.cnpj).exists():
-            self.companies.add(company_contact)
+    def append_new_companie(self, company_cnpj):
+        cnpj = company_cnpj
+        if cnpj not in self.companies:
+            self.companies.append(cnpj)
             self.save()
+
+
+class PdfFile(models.Model):
+    cnpj = models.CharField(max_length=255, primary_key=False)
+    company_name = models.CharField(max_length=255, default="NOME DA EMPRESA")
+    file = models.TextField()
+    grouping = models.ForeignKey(
+        DASFileGrouping, on_delete=models.CASCADE, related_name="pdfs"
+    )
+
+    def __str__(self):
+        return f"PDF of: {self.grouping}"
+
+    class Meta:
+        verbose_name_plural = "PDFs"
+        unique_together = ("cnpj", "grouping")

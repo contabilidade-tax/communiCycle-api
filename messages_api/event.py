@@ -1,12 +1,11 @@
 import os
 
-import requests
 from celery import shared_task
 from django.db.utils import IntegrityError
 
 from control.functions import check_client_response
 from messages_api.views import get_valid_ticket
-from webhook.exceptions import ObjectNotCreated
+from webhook.exceptions import DigisacBugException
 from webhook.functions.model_obj import (
     create_new_message,
     create_new_message_control,
@@ -15,6 +14,7 @@ from webhook.functions.model_obj import (
 from webhook.utils.get_objects import get_message, get_message_control, get_ticket
 from webhook.utils.logger import Logger
 from webhook.utils.tools import (
+    IGNORED_ID_LISTS,
     DictAsObject,
     any_digisac_request,
     get_contact_number,
@@ -50,6 +50,7 @@ def manage(data):
     }
     # Aqui eu consigo filtrar os eventos que serão mandados para background
     event_will_apply_async = [handle_message_created, handle_ticket_created]
+    # event_will_apply_async = []
     #
     event = data.get("event")
     data = data.get("data")
@@ -111,8 +112,10 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
         message_digisac = DictAsObject(message_digisac)
         obs += "ticket pego da API digisac"
         message_data["ticket"] = message_digisac.ticketId
-    # url = f"{WEBHOOK_API}/messages/create"
-
+    #
+    if any(message_data.get("contact_id") == string for string in IGNORED_ID_LISTS):
+        return "Ticket ignorado: Grupo de relatórios fiscais"
+    #
     if number is None:
         raise ValueError(f"Consulta do telefone:{number} com id {contact_id} falhou")
     # if not isFromMe:
@@ -122,11 +125,13 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
         message = create_new_message(**message_data)
     except IntegrityError as e:
         return f"Mensagem criada anteriormente. id:{message_id}"
-    # if not isFromMe and not response.status_code in range(400, 501):
-    #     check_client_response.apply_async(args=[contact_id])
+    except DigisacBugException as e:
+        return str(e)
+    #
     if not isFromMe:
         check_client_response.apply_async(args=[contact_id])  # .get(contact_id)
 
+    # Pega no digisac o id da ultima mensagem criada
     update_ticket_last_message(ticket_id=data.get("ticketId"))
     # except Exception as e:
     #     raise ObjectNotCreated(
@@ -184,6 +189,10 @@ def handle_ticket_created(ticket_id, contact_id, last_message_id, data=...):
         "contact": contact_id,
         "last_message": last_message_id,
     }
+
+    #
+    if any(ticket_id == string for string in IGNORED_ID_LISTS):
+        return "Ticket ignorado: Grupo de relatórios fiscais"
 
     # response = requests.post(url, params=params)
     # try:

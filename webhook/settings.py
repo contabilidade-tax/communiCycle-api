@@ -74,12 +74,11 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "messages_api",
+    "control",
     "drf_yasg",
     "rest_framework",
-    "messages_api",
-    "contacts",
     "celery",
-    "control",
 ]
 
 MIDDLEWARE = [
