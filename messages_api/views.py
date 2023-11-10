@@ -19,7 +19,7 @@ from messages_api.serializer import (
 )
 from webhook.utils.get_objects import get_digisac_contact_by_id
 from webhook.utils.logger import Logger
-from webhook.utils.tools import DictAsObject
+from webhook.utils.tools import IGNORED_ID_LISTS, DictAsObject
 
 # Create your views here.
 logger = Logger(__name__)
@@ -176,6 +176,9 @@ def update_message(request: HttpRequest):
 
 
 def get_valid_ticket(ticket_id):
+    if ticket_id == "4bf3c03a-2d33-439c-8b13-efb50531e9c1":
+        return None
+    #
     while True:
         try:
             ticket = get_object_or_404(Ticket, ticket_id=ticket_id)

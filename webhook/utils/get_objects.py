@@ -26,6 +26,33 @@ def get_company_contact_by_cnpj(cnpj: Union[str, int], **kwargs):
     raise ContactNotFound(f"Contact for {cnpj} not found")
 
 
+def get_company_data_by_digisac_id(digisac_id):
+    response = httpx.get(f"{COMPANIES_API}/contacts/company-data/{digisac_id}")
+
+    if response.status_code == 200:
+        return response.json()
+
+    raise ContactNotFound(f"This DigisacContact for {digisac_id} not exists")
+
+
+def get_company_name_by_id(company_id):
+    response = httpx.get(f"{COMPANIES_API}/companies/id/{company_id}")
+
+    if response.status_code == 200:
+        return response.json()
+
+    raise ObjectNotFound(f"This Company for {company_id} does not exists")
+
+
+def get_all_companies_by_digisac_contact(digisac_id):
+    response = httpx.get(f"{COMPANIES_API}/contacts/digisac/all/{digisac_id}")
+
+    if response.status_code == 200:
+        return response.json()
+
+    raise ContactNotFound(f"This DigisacContact for {digisac_id} not exists")
+
+
 def get_digisac_contact_by_id(contact_id: str, **kwargs):
     request = httpx.get(f"{COMPANIES_API}/contacts/digisac/{contact_id}")
 

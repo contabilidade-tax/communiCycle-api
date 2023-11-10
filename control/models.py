@@ -19,6 +19,12 @@ class MessageControl(models.Model):
     retries = models.IntegerField(default=1)
     check_count = models.IntegerField(default=0)
 
+    def get_all_ticket_ids(self):
+        lista = []
+        lista.append(self.ticket.ticket_id)
+        lista.extend(self.get_ticket_link().additional_tickets)
+        return lista
+
     def last_message_visualized(self):
         ticket_link = self.get_ticket_link()
         if (
@@ -138,9 +144,21 @@ class DASFileGrouping(models.Model):
     def __str__(self):
         return f"Agrupamento de DAS para {self.contact_id}"
 
-    def append_new_companie(self, company_contact):
-        # Assumindo que company_contact é um objeto que possui um atributo cnpj
-        cnpj = company_contact.cnpj
+    def append_new_companie(self, company_cnpj):
+        cnpj = company_cnpj
         if cnpj not in self.companies:
             self.companies.append(cnpj)
             self.save()
+
+
+class PdfFile(models.Model):
+    cnpj = models.CharField(max_length=255, primary_key=False)
+    pdf = models.TextField()
+    grouping = models.ForeignKey(DASFileGrouping, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"PDF of: {self.grouping}"
+
+    class Meta:
+        verbose_name_plural = "PDFs"
+        unique_together = ("cnpj", "grouping")

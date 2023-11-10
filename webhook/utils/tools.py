@@ -16,6 +16,8 @@ load_dotenv()
 
 logger = Logger(__name__)
 
+IGNORED_ID_LISTS = ["4bf3c03a-2d33-439c-8b13-efb50531e9c1"]
+
 
 class request_methods(enum.Enum):
     get = "get"
@@ -157,14 +159,15 @@ def message_is_already_saved(message_id) -> bool:
     return True if message else False
 
 
-def group_das_to_send(contact, company_contact, period):
+def group_das_to_send(contact_id: str, companie: str, period):
     from control.models import DASFileGrouping
 
     grouping, created = DASFileGrouping.objects.get_or_create(
-        contact=contact, period=period
+        contact_id=contact_id, period=period
     )
 
-    grouping.append_new_companie(company_contact)
+    grouping.append_new_companie(companie)
+    return grouping
 
 
 class DictAsObject:

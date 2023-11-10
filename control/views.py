@@ -9,8 +9,6 @@ from rest_framework import viewsets
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from contacts.models import Pendencies
-from contacts.serializer import PendenciesSerializer
 from control.functions import send_message
 from control.models import MessageControl
 from control.serializer import ControlMessageSerializer

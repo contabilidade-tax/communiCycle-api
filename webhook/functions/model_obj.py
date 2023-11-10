@@ -1,7 +1,9 @@
 from django.conf import settings
+from django.db import IntegrityError
 
-from control.models import Message, MessageControl, Ticket
-from webhook.exceptions import ObjectNotFound
+from control.models import Message, MessageControl, PdfFile, Ticket
+from messages_api.views import get_valid_ticket
+from webhook.exceptions import DigisacBugException, ObjectNotFound
 from webhook.utils.get_objects import get_ticket
 from webhook.utils.tools import DictAsObject
 
@@ -17,6 +19,15 @@ def check_has_value(anything, error_message=""):
     )
 
 
+def check_ticket(ticket_id, error_message):
+    ticket = get_ticket(ticket_id=ticket_id)
+
+    if ticket:
+        return True
+
+    raise ObjectNotFound(error_message)
+
+
 def create_new_message(**kwargs) -> Message:
     data = DictAsObject(kwargs)
     #
@@ -30,11 +41,11 @@ def create_new_message(**kwargs) -> Message:
     isFromMe = data.is_from_me
     text = data.text
     #
-    ticket = get_ticket(ticket_id=ticket_id)
+    ticket = get_valid_ticket(ticket_id=ticket_id)
     #
 
-    if not contact_id in settings.IGNORED_ID_LISTS:
-        check_has_value(ticket, f"Ticket not found: {ticket_id}")
+    if not ticket:
+        raise DigisacBugException("Ticket for fiscal group avoided")
 
     message, created = Message.objects.get_or_create(
         message_id=message_id,
@@ -84,3 +95,18 @@ def create_new_message_control(ticket: Ticket, **kwargs) -> MessageControl:
     )
     #
     return message_control, created
+
+
+def create_new_pdf_file(cnpj, file, grouping) -> Ticket:
+    try:
+        pdf = file
+        cnpj = cnpj
+        grouping = grouping
+        #
+        pdf_file = PdfFile.objects.create(grouping=grouping, cnpj=cnpj, pdf=pdf)
+        #
+        return pdf_file
+    except IntegrityError as e:
+        raise Exception(
+            "Esse cnpj/pdf já está na fila de processamento. Verifique os grupamentos de DAS"
+        )

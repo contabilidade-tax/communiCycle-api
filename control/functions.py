@@ -1,35 +1,34 @@
+import locale
 import os
 import re
-from datetime import datetime as dt
+from datetime import datetime
 
 from celery import shared_task
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from control.models import DASFileGrouping
-from webhook.exceptions import ObjectNotFound
-from webhook.utils.get_objects import (
-    get_company_contact_by_cnpj,
-    get_digisac_contact_by_id,
-    get_message_control,
-)
+from webhook.exceptions import ObjectNotFound, UserBadRequest
+from webhook.functions.model_obj import create_new_pdf_file
+from webhook.utils.get_objects import (get_all_companies_by_digisac_contact,
+                                       get_company_contact_by_cnpj,
+                                       get_company_name_by_id,
+                                       get_digisac_contact_by_id,
+                                       get_message_control)
 from webhook.utils.logger import Logger
 from webhook.utils.text import Answers, BaseText
 from webhook.utils.text import TransferTicketReasons as Reasons
-from webhook.utils.tools import (
-    DictAsObject,
-    any_digisac_request,
-    get_contact_number,
-    get_current_period,
-    group_das_to_send,
-)
+from webhook.utils.tools import (DictAsObject, any_digisac_request,
+                                 get_contact_number, get_current_period,
+                                 group_das_to_send)
 
 logger = Logger(__name__)
+locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
 ## -----
 SAUDACAO_TEXT = BaseText.saudacao.value
 DISCLAIMER_TEXT = BaseText.disclaimer.value
 ## -----
-POSITIVE_RESPONSES = r"\b(sim|bacana|ok|tá|ta|bom|recebi|receb|na\shora|ótimo|beleza|blz|entendi|show|confirmado|confirme|tá\sótimo|massa|s|manda|mande|envia|pode|👍|👍🏾|👍🏻|👍🏼|👍🏿|pode\sser)\b"
+POSITIVE_RESPONSES = r"\b(sim|bacana|ok|tá|ta|bom|recebi|receb|na\shora|ótimo|beleza|blz|entendi|show|confirmado|confirme|tá\sótimo|massa|valeu|s|manda|obrigado|obrigada|mande|envia|pode|👍|👍🏾|👍🏻|👍🏼|👍🏿|pode\sser)\b"
 NEGATIVE_RESPONSES = r"\b(n|nao|pare|parar|stop|não|\?|nada)\b"
 ASSISTANCE_REQUESTS = r"\b(atendente|humano|pessoa|atendimento|atedente|sair|porque|Porque|Por que|por que|Por quê)\b"
 NOT_CHAT_TYPES = r"\b(image|document|sticker)\b"
@@ -361,57 +360,71 @@ def get_contact_pendencies_and_send(contact_id):
     #     return e
 
 
+@shared_task(name="process_init_app")
+def process_init_app():
+    ...
+
+
 ##-- Addtional views
 @api_view(["GET"])
 def init_app(request):
     try:
+        #
+        file = request.data.get("pdf")
+        #
         cnpj = request.query_params.get("cnpj")
-        company_contact = get_digisac_contact_by_id(cnpj=cnpj)
+        company_contact = DictAsObject(get_company_contact_by_cnpj(cnpj=cnpj))
+        digisac_contact = DictAsObject(company_contact.digisac_contact)
+        company_name = get_company_name_by_id(company_contact.company)
+        # AGORA Pego quantas empresas o contato tem atrelado a ele
+        companies_by_contact = get_all_companies_by_digisac_contact(
+            digisac_contact.digisac_id
+        )
+        # TODO
+        company_pendencies = False
 
         if not company_contact:
-            raise FileNotFoundError("Company Contact não existe")
+            raise ObjectNotFound("Company Contact não existe")
+        if not file:
+            raise UserBadRequest("Cadê o pdf em base 64?")
 
-        pendencies_list = company_contact.get_pendencies()
-
-        file = request.data.get("pdf")
-        company_contact.pdf = file
-        company_contact.save()
-
-        reduce = request.query_params.get("reduce")
-        if reduce:
-            reduce = int(reduce)
-            if reduce == 0:
-                pendencies_list = None
-
-            pendencies_list = pendencies_list[:reduce]
-
-        if len(company_contact.contact.company_contacts.all()) > 1:
-            group_das_to_send(
-                company_contact.contact, company_contact, get_current_period(dtime=True)
+        if len(companies_by_contact) > 1:
+            grouping = group_das_to_send(
+                digisac_contact.contact_number,
+                cnpj,
+                get_current_period(dtime=True),
             )
+            pdf_file = create_new_pdf_file(cnpj, file, grouping)
+
             return Response({"success": "Contato responsável por mais de uma empresa"})
 
-        send_message(company_contact.contact.contact_id, text=SAUDACAO_TEXT)
-        send_message(company_contact.contact.contact_id, file=file)
+        ###Ínicio do envio das mensagens que deverá ser assíncrono
+        send_message(digisac_contact.digisac_id, text=SAUDACAO_TEXT)
+        send_message(digisac_contact.digisac_id, file=file)
 
-        if pendencies_list:
-            pendencies_text = [
-                pendencies.period.strftime("%B/%Y") for pendencies in pendencies_list
-            ]
+        # CASO TENHA PENDENCIAS ELE ENVIA A MENSAGEM DE PENDENCIAS
+        if company_pendencies:
             pendencies_message = BaseText.get_pendencies_text(
-                ", ".join(pendencies_text)
+                ", ".join(company_pendencies)
             )
 
             send_message(company_contact.contact_id, text=pendencies_message)
             update_ticket_control_pendencies.apply_async(
                 args=[company_contact.contact_id, True]
             )
-        else:
-            send_message(company_contact.contact_id, text=DISCLAIMER_TEXT)
+            return Response({"success": "message_sent with pendencies"})
+        ###
 
+        # CASO NÃO TENHA PENDENCIAS ELE ENVIA A DISCLAIMER
+        send_message(digisac_contact.digisac_id, text=DISCLAIMER_TEXT)
         return Response({"success": "message_sent"})
+
+    except UserBadRequest as e:
+        return Response({"error": "Bad Request", "message": str(e)}, status=400)
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        return Response(
+            {"error": "Internal Server Error", "message": e.args}, status=500
+        )
 
 
 @api_view(["GET"])
