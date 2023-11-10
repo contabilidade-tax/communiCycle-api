@@ -153,6 +153,7 @@ class DASFileGrouping(models.Model):
 
 class PdfFile(models.Model):
     cnpj = models.CharField(max_length=255, primary_key=False)
+    company_name = models.CharField(max_length=255, default="NOME DA EMPRESA")
     pdf = models.TextField()
     grouping = models.ForeignKey(DASFileGrouping, on_delete=models.CASCADE)
 

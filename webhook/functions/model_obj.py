@@ -97,10 +97,11 @@ def create_new_message_control(ticket: Ticket, **kwargs) -> MessageControl:
     return message_control, created
 
 
-def create_new_pdf_file(cnpj, file, grouping) -> Ticket:
+def create_new_pdf_file(cnpj, company_name, file, grouping) -> Ticket:
     try:
         pdf = file
         cnpj = cnpj
+        company_name = company_name
         grouping = grouping
         #
         pdf_file = PdfFile.objects.create(grouping=grouping, cnpj=cnpj, pdf=pdf)

@@ -10,17 +10,23 @@ from rest_framework.response import Response
 from control.models import DASFileGrouping
 from webhook.exceptions import ObjectNotFound, UserBadRequest
 from webhook.functions.model_obj import create_new_pdf_file
-from webhook.utils.get_objects import (get_all_companies_by_digisac_contact,
-                                       get_company_contact_by_cnpj,
-                                       get_company_name_by_id,
-                                       get_digisac_contact_by_id,
-                                       get_message_control)
+from webhook.utils.get_objects import (
+    get_all_companies_by_digisac_contact,
+    get_company_contact_by_cnpj,
+    get_company_name_by_id,
+    get_digisac_contact_by_id,
+    get_message_control,
+)
 from webhook.utils.logger import Logger
 from webhook.utils.text import Answers, BaseText
 from webhook.utils.text import TransferTicketReasons as Reasons
-from webhook.utils.tools import (DictAsObject, any_digisac_request,
-                                 get_contact_number, get_current_period,
-                                 group_das_to_send)
+from webhook.utils.tools import (
+    DictAsObject,
+    any_digisac_request,
+    get_contact_number,
+    get_current_period,
+    group_das_to_send,
+)
 
 logger = Logger(__name__)
 locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
@@ -365,6 +371,7 @@ def process_init_app():
     ...
 
 
+# TODO PENDENCIES IN WOZ
 ##-- Addtional views
 @api_view(["GET"])
 def init_app(request):
