@@ -14,6 +14,7 @@ from webhook.utils.get_objects import (
     get_all_companies_by_digisac_contact,
     get_company_contact_by_cnpj,
     get_company_name_by_id,
+    get_contact_pendencies,
     get_das_grouping,
     get_digisac_contact_by_id,
     get_message_control,
@@ -409,7 +410,7 @@ def init_app(request):
             digisac_contact.digisac_id
         )
         # TODO
-        company_pendencies = False
+        company_pendencies = get_contact_pendencies(cnpj)
 
         if not company_contact:
             raise ObjectNotFound("Company Contact não existe")
@@ -436,9 +437,9 @@ def init_app(request):
                 ", ".join(company_pendencies)
             )
 
-            send_message(company_contact.contact_id, text=pendencies_message)
+            send_message(digisac_contact.digisac_id, text=pendencies_message)
             update_ticket_control_pendencies.apply_async(
-                args=[company_contact.contact_id, True]
+                args=[digisac_contact.digisac_id, True]
             )
             return Response({"success": "message_sent with pendencies"})
         ###
@@ -449,10 +450,10 @@ def init_app(request):
 
     except (UserBadRequest, ContactNotFound) as e:
         return Response({"error": "Bad Request", "message": str(e)}, status=400)
-    except Exception as e:
-        return Response(
-            {"error": "Internal Server Error", "message": e.args}, status=500
-        )
+    # except Exception as e:
+    #     return Response(
+    #         {"error": "Internal Server Error", "message": e.args}, status=500
+    #     )
 
 
 @api_view(["GET"])
