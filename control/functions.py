@@ -376,11 +376,19 @@ def process_init_app():
 @shared_task(name="process_grouping_das")
 def process_grouping_das(grouping_id, contact, files_to_send):
     grouping = get_das_grouping(id=grouping_id)
+    # Variável auxiliar para verificar se o disclaimer deve ser enviado
+    # O disclaimer será enviado se nenhuma das empresas do grupamento
+    # Tiver pendencias. Caso contrário, será enviado o texto de pendencias
+    send_disclaimer = True
+
     # Inicio do processo de envio
     send_message(contact, text=SAUDACAO_TEXT)
     # Envia cada pdf para o contato
     for name, pdf in files_to_send:
         send_message(contact, file=pdf, text=name)
+        
+        # TODO Verifica se o cnpj do contato tem pendencias e já envia o texto.
+        
     # Envia a mensagem de disclaimer
     send_message(contact, text=DISCLAIMER_TEXT)
 
