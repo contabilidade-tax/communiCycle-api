@@ -1,7 +1,9 @@
 import os
 import time
+from datetime import datetime
 from typing import Union
 
+import dotenv
 import httpx
 from django.conf import settings
 from django.http import Http404
@@ -11,9 +13,27 @@ from control.models import DASFileGrouping, MessageControl, TicketLink
 from messages_api.models import Message, Ticket
 from webhook.exceptions import ContactNotFound, ObjectNotFound
 
+dotenv.load_dotenv()
+
 max_retries = 5
 att_tax = 0.1
 COMPANIES_API = settings.COMPANIES_API
+WOZ_URL = os.getenv("WOZ_URL")
+
+
+def get_contact_pendencies(cnpj: str):
+    response = httpx.get(f"{WOZ_URL}/mei/competences", params={"cnpj": cnpj})
+
+    if response.status_code == 200:
+        pendencies = response.json()
+        pendencies_list = []
+        for pendency in pendencies:
+            period = pendency.get("period")
+            period_str = datetime.strptime(period, "%Y-%m-%d").strftime("%B/%Y")
+            pendencies_list.append(period_str)
+        return pendencies_list
+
+    return False
 
 
 def get_company_contact_by_cnpj(cnpj: Union[str, int], **kwargs):

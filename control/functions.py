@@ -14,6 +14,7 @@ from webhook.utils.get_objects import (
     get_all_companies_by_digisac_contact,
     get_company_contact_by_cnpj,
     get_company_name_by_id,
+    get_contact_pendencies,
     get_das_grouping,
     get_digisac_contact_by_id,
     get_message_control,
@@ -372,14 +373,22 @@ def process_init_app():
     ...
 
 
-# @shared_task(name="process_grouping_das")
+@shared_task(name="process_grouping_das")
 def process_grouping_das(grouping_id, contact, files_to_send):
     grouping = get_das_grouping(id=grouping_id)
+    # Variável auxiliar para verificar se o disclaimer deve ser enviado
+    # O disclaimer será enviado se nenhuma das empresas do grupamento
+    # Tiver pendencias. Caso contrário, será enviado o texto de pendencias
+    send_disclaimer = True
+
     # Inicio do processo de envio
     send_message(contact, text=SAUDACAO_TEXT)
     # Envia cada pdf para o contato
     for name, pdf in files_to_send:
         send_message(contact, file=pdf, text=name)
+        
+        # TODO Verifica se o cnpj do contato tem pendencias e já envia o texto.
+        
     # Envia a mensagem de disclaimer
     send_message(contact, text=DISCLAIMER_TEXT)
 
@@ -409,7 +418,7 @@ def init_app(request):
             digisac_contact.digisac_id
         )
         # TODO
-        company_pendencies = False
+        company_pendencies = get_contact_pendencies(cnpj)
 
         if not company_contact:
             raise ObjectNotFound("Company Contact não existe")
@@ -436,9 +445,9 @@ def init_app(request):
                 ", ".join(company_pendencies)
             )
 
-            send_message(company_contact.contact_id, text=pendencies_message)
+            send_message(digisac_contact.digisac_id, text=pendencies_message)
             update_ticket_control_pendencies.apply_async(
-                args=[company_contact.contact_id, True]
+                args=[digisac_contact.digisac_id, True]
             )
             return Response({"success": "message_sent with pendencies"})
         ###
@@ -449,10 +458,10 @@ def init_app(request):
 
     except (UserBadRequest, ContactNotFound) as e:
         return Response({"error": "Bad Request", "message": str(e)}, status=400)
-    except Exception as e:
-        return Response(
-            {"error": "Internal Server Error", "message": e.args}, status=500
-        )
+    # except Exception as e:
+    #     return Response(
+    #         {"error": "Internal Server Error", "message": e.args}, status=500
+    #     )
 
 
 @api_view(["GET"])
@@ -485,28 +494,30 @@ def send_groupinf_of_das(request):
     )
 
 
-@api_view(["POST"])
+@api_view(["GET"])
 def send_message_to_client(request):
-    contact_number = request.query_params.get("cnpj")
-    text = request.data.get("text")
-    contact = get_company_contact_by_cnpj(contact_number=contact_number)
+    try:
+        cnpj = request.query_params.get("cnpj")
+        text = request.query_params.get("text")
+        contact = DictAsObject(get_company_contact_by_cnpj(cnpj=cnpj))
+        digisac_contact = DictAsObject(contact.digisac_contact)
 
-    text = (
-        """
-Empresários: Descubra a Nova Linha de Crédito do Pronamp! 🚀💼 
+        if not text:
+            raise UserBadRequest("Cadê o texto da mensagem moral?")
+        # Envia
+        send_message(digisac_contact.digisac_id, text=text)
+        # Em seguida fecha o ticket
+        close_ticket.apply_async(args=[digisac_contact.digisac_id], countdown=25)
+        #
+        return Response(
+            {
+                "success": f"Mensagem enviada com sucesso para: {digisac_contact.contact_number} - {digisac_contact.digisac_id}"
+            },
+            status=200,
+        )
 
-💰📈 Clique no link e saiba como impulsionar seu negócio com essa oportunidade única! 
-🌟 #Pronamp #LinhaDeCrédito #Empresários #OportunidadeDeCrescimento
-
-https://www.instagram.com/p/Cu-UcmTJwXR/
-"""
-        if not text
-        else text
-    )
-
-    send_message(contact.contact_id, text=text)
-
-    return Response(f"Mensagem enviada com sucesso para: {contact_number}")
+    except UserBadRequest as e:
+        return Response({"error": "Bad Request", "message": str(e)}, status=400)
 
 
 @api_view(["GET"])
