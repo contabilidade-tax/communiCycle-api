@@ -13,7 +13,7 @@ app = Celery("webhook")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks(lambda: settings.INSTALLED_APPS)
 
-app.conf.task_queues = (Queue("updates", routing_key="updates.rk"),)
+CELERY_QUEUES = (Queue("updates", routing_key="updates.rk"),)
 
 # Configurando a URL do broker
 app.conf.broker_url = os.environ.get("CLOUDAMQP_URL", os.getenv("CLOUDAMQP_URL"))

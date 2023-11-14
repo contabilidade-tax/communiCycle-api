@@ -1,4 +1,3 @@
-import locale
 import os
 import re
 from datetime import datetime
@@ -10,25 +9,19 @@ from rest_framework.response import Response
 from control.models import DASFileGrouping
 from webhook.exceptions import ContactNotFound, ObjectNotFound, UserBadRequest
 from webhook.functions.model_obj import create_new_pdf_file
-from webhook.utils.get_objects import (
-    get_all_companies_by_digisac_contact,
-    get_company_contact_by_cnpj,
-    get_company_name_by_id,
-    get_contact_pendencies,
-    get_das_grouping,
-    get_digisac_contact_by_id,
-    get_message_control,
-)
+from webhook.utils.get_objects import (get_all_companies_by_digisac_contact,
+                                       get_company_contact_by_cnpj,
+                                       get_company_name_by_id,
+                                       get_contact_pendencies,
+                                       get_das_grouping,
+                                       get_digisac_contact_by_id,
+                                       get_message_control)
 from webhook.utils.logger import Logger
 from webhook.utils.text import Answers, BaseText
 from webhook.utils.text import TransferTicketReasons as Reasons
-from webhook.utils.tools import (
-    DictAsObject,
-    any_digisac_request,
-    get_contact_number,
-    get_current_period,
-    group_das_to_send,
-)
+from webhook.utils.tools import (DictAsObject, any_digisac_request,
+                                 get_contact_number, get_current_period,
+                                 group_das_to_send)
 
 logger = Logger(__name__)
 ## -----
@@ -393,29 +386,32 @@ def process_grouping_das(grouping_id, contact, files_to_send):
     for company_pdf in grouping.pdfs.all():
         company_pendencies = get_contact_pendencies(company_pdf.cnpj)
         if company_pendencies:
+            # Atualiza o controle das pendencias
+            update_ticket_control_pendencies(contact, True)
             # Seta false 2x porque não pensei em como otimizar ainda
             send_disclaimer = False
-            pendencies_message = BaseText.get_pendencies_text(
-                ", ".join(company_pendencies)
-            )
             #
             pendencies_for_company.append(
-                f"{company_pdf.company_name}: {pendencies_message}"
+                rf"*{company_pdf.company_name}*: {', '.join(company_pendencies)}"
             )
+            #
 
     if send_disclaimer:
         # Envia a mensagem de disclaimer
         send_message(contact, text=DISCLAIMER_TEXT)
     else:
+        # Mensagem final que será enviada
+        pendencies_message = BaseText.get_pendencies_text(
+            "\n".join(pendencies_for_company)
+        )
         # Envia as pendencias para cada empresa
-        for pendencie in pendencies_for_company:
-            send_message(contact, text=pendencie)
+        send_message(contact, text=pendencies_message)
 
     # Atualiza que o grupamento já foi enviado esse mês
     grouping.was_sent = True
     grouping.save()
 
-    return f"Enviado para {files_to_send[0]}"
+    return f"Enviado para {contact}"
 
 
 # TODO PENDENCIES IN WOZ
@@ -511,7 +507,7 @@ def send_groupinf_of_das(request):
         {
             "info": "Nenhum agrupamento de DAS esse mês ou todos que existem já foram enviados"
         },
-        status=500,
+        status=200,
     )
 
 

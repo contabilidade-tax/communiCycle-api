@@ -2,10 +2,9 @@ from django.conf import settings
 from django.db import IntegrityError
 
 from control.models import Message, MessageControl, PdfFile, Ticket
-from messages_api.views import get_valid_ticket
 from webhook.exceptions import DigisacBugException, ObjectNotFound
 from webhook.utils.get_objects import get_ticket
-from webhook.utils.tools import DictAsObject
+from webhook.utils.tools import DictAsObject, get_digisac_ticket
 
 
 def check_has_value(anything, error_message=""):
@@ -45,7 +44,15 @@ def create_new_message(**kwargs) -> Message:
     #
 
     if not ticket:
-        raise DigisacBugException("Ticket for fiscal group avoided")
+        digisac_ticket = get_digisac_ticket(ticket_id)
+        # Cria o ticket se não existir
+        create_new_ticket(
+            ticket_id=digisac_ticket.ticket_id,
+            period=digisac_ticket.period,
+            contact_id=digisac_ticket.contact_id,
+            last_message_id=digisac_ticket.last_message_id,
+        )
+        # raise DigisacBugException("Ticket não encontrado ou não criado!")
 
     message, created = Message.objects.get_or_create(
         message_id=message_id,

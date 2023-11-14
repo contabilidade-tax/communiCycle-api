@@ -24,6 +24,19 @@ class request_methods(enum.Enum):
     post = "post"
 
 
+def get_digisac_ticket(ticket_id):
+    response = any_digisac_request(f"/tickets/{ticket_id}", method="get", json=False)
+
+    if response.status_code == 200:
+        response_dict = {}
+        ticket = response_dict.json()
+
+        response_dict["ticket_id"] = ticket_id
+        response_dict["period"] = get_current_period(dtObject=True)
+        response_dict["contact_id"] = ticket["contactId"]
+        response_dict["last_message_id"] = ticket["lastMessageId"]
+
+
 ##-- Digisac requests
 def any_digisac_request(
     url, body=None, method: Union[request_methods, str] = request_methods.get, json=True

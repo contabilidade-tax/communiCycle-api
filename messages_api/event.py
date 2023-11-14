@@ -146,7 +146,7 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
     return f"Message Created successfully! OBS:({obs})"
 
 
-# @shared_task(name="update_message")
+@shared_task(name="update_message", queue="updates")
 def handle_message_updated(message_id, data=...):
     if not message_id:
         return "Message vazio. diabo é isso?"
@@ -228,7 +228,7 @@ def handle_ticket_created(ticket_id, contact_id, last_message_id, data=...):
     # raise ObjectNotCreated(f"\nFailed to create ticket with id: {ticket_id}\n{e}")
 
 
-# @shared_task(name="update_ticket")
+@shared_task(name="update_ticket", queue="updates")
 def handle_ticket_updated(ticket_id, data=...):
     actual_status = get_event_status("ticket", ticket_id=ticket_id)
     last_message_id = data.get("lastMessageId")

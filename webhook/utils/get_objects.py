@@ -15,7 +15,7 @@ from webhook.exceptions import ContactNotFound, ObjectNotFound
 
 dotenv.load_dotenv()
 
-max_retries = 5
+max_retries = 3
 att_tax = 0.1
 COMPANIES_API = settings.COMPANIES_API
 WOZ_URL = os.getenv("WOZ_URL")
@@ -132,12 +132,15 @@ def get_message(**kwargs):
 
 
 def get_valid_ticket(ticket_id):
-    while True:
+    retries = 0
+    while retries <= 50:
         try:
             ticket = get_object_or_404(Ticket, ticket_id=ticket_id)
             return ticket
         except Http404:
             time.sleep(0.5)
+            retries += 1
+    return None
 
 
 def get_ticket(**kwargs):
