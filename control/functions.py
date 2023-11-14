@@ -31,7 +31,6 @@ from webhook.utils.tools import (
 )
 
 logger = Logger(__name__)
-locale.setlocale(locale.LC_ALL, "pt_BR.UTF-8")
 ## -----
 SAUDACAO_TEXT = BaseText.saudacao.value
 DISCLAIMER_TEXT = BaseText.disclaimer.value
@@ -81,7 +80,8 @@ def process_input(
     ):
         send_message(contact_id, text=Answers.UNEXPECTED_MESSAGE.value)
         # Alterna o client_needs_help para True para analisar a resposta dele após essa mensagem
-        switch_client_needs_help.apply_async(args=[contact_id, True])
+        # switch_client_needs_help.apply_async(args=[contact_id, True])
+        switch_client_needs_help(contact_id, True)
 
         return "Mensagem não esperada. Troca de canal enviada"
 
@@ -94,13 +94,15 @@ def process_input(
             )
             send_message(contact_id, text=Answers.ASK_FOR_ATTENDANT.value)
             ticket_message = close_ticket.apply_async(args=[contact_id], countdown=30)
-            switch_client_needs_help.apply_async(args=[contact_id, False])
+            # switch_client_needs_help.apply_async(args=[contact_id, False])
+            switch_client_needs_help(contact_id, False)
 
             return f"Troca de canal enviada e {ticket_message}"
 
         elif is_match(sentence, NEGATIVE_RESPONSES, exact_match):
             send_message(contact_id, text=Answers.DONT_NEED_ATTENDANT.value)
-            switch_client_needs_help.apply_async(args=[contact_id, False])
+            # switch_client_needs_help.apply_async(args=[contact_id, False])
+            switch_client_needs_help(contact_id, False)
             confirm_message.apply_async(args=[contact_id])
 
             return "Atendimento inesperado encerrado com sucesso! Cliente não quis atendente"
@@ -217,16 +219,16 @@ def send_message(contact_id, text="", file=None):
     return any_digisac_request("/messages", body=body, method="post")
 
 
-def send_files(contact_id, pendencie, file):
-    try:
-        send_message(contact_id, text=pendencie, file=file)
-        return Response("Deu certo!")
-    except Exception as e:
-        return Response(f"Deu certo não: {e}")
+# def send_files(contact_id, pendencie, file):
+#     try:
+#         send_message(contact_id, text=pendencie, file=file)
+#         return Response("Deu certo!")
+#     except Exception as e:
+#         return Response(f"Deu certo não: {e}")
 
 
 ##-- Functional tasks to app
-@shared_task(name="client-needs-help")
+# @shared_task(name="client-needs-help")
 def switch_client_needs_help(contact_id, boolean):
     control = get_control_object(contact_id=contact_id)
 
@@ -323,18 +325,17 @@ def transfer_ticket(contact_id, motivo=None):
     return "Solicitação de atendimento enviada para o grupo WOZ - RELATÓRIOS"
 
 
-@shared_task(name="update_control_pendencies")
-def update_ticket_control_pendencies(contact_id, pendencies):
+# @shared_task(name="update_control_pendencies")
+def update_ticket_control_pendencies(contact_id, has_pendencies):
     control = get_control_object(contact_id=contact_id)
 
-    control.pendencies = pendencies
+    control.pendencies = has_pendencies
     control.save()
 
     return f"Pendencias atualizadas contact_id: {contact_id}"
 
-
-@shared_task(name="send-pendencies")
-def get_contact_pendencies_and_send(contact_id):
+    # @shared_task(name="send-pendencies")
+    # def get_contact_pendencies_and_send(contact_id):
     ...
     # try:
     #     contact = get_contact(contact_id=contact_id)
@@ -378,19 +379,37 @@ def process_grouping_das(grouping_id, contact, files_to_send):
     grouping = get_das_grouping(id=grouping_id)
     # Variável auxiliar para verificar se o disclaimer deve ser enviado
     # O disclaimer será enviado se nenhuma das empresas do grupamento
-    # Tiver pendencias. Caso contrário, será enviado o texto de pendencias
+    # tiver pendencias. Caso contrário, será enviado o texto de pendencias
     send_disclaimer = True
+    pendencies_for_company = []
 
     # Inicio do processo de envio
     send_message(contact, text=SAUDACAO_TEXT)
     # Envia cada pdf para o contato
     for name, pdf in files_to_send:
         send_message(contact, file=pdf, text=name)
-        
-        # TODO Verifica se o cnpj do contato tem pendencias e já envia o texto.
-        
-    # Envia a mensagem de disclaimer
-    send_message(contact, text=DISCLAIMER_TEXT)
+
+    # TODO Verifica se o cnpj do contato tem pendencias e já envia o texto.
+    for company_pdf in grouping.pdfs.all():
+        company_pendencies = get_contact_pendencies(company_pdf.cnpj)
+        if company_pendencies:
+            # Seta false 2x porque não pensei em como otimizar ainda
+            send_disclaimer = False
+            pendencies_message = BaseText.get_pendencies_text(
+                ", ".join(company_pendencies)
+            )
+            #
+            pendencies_for_company.append(
+                f"{company_pdf.company_name}: {pendencies_message}"
+            )
+
+    if send_disclaimer:
+        # Envia a mensagem de disclaimer
+        send_message(contact, text=DISCLAIMER_TEXT)
+    else:
+        # Envia as pendencias para cada empresa
+        for pendencie in pendencies_for_company:
+            send_message(contact, text=pendencie)
 
     # Atualiza que o grupamento já foi enviado esse mês
     grouping.was_sent = True
@@ -446,9 +465,11 @@ def init_app(request):
             )
 
             send_message(digisac_contact.digisac_id, text=pendencies_message)
-            update_ticket_control_pendencies.apply_async(
-                args=[digisac_contact.digisac_id, True]
-            )
+            # Informa ao controle das mensagens que tem pendencias
+            update_ticket_control_pendencies(digisac_contact.digisac_id, True)
+            # update_ticket_control_pendencies.apply_async(
+            #     args=[digisac_contact.digisac_id, True]
+            # )
             return Response({"success": "message_sent with pendencies"})
         ###
 
@@ -458,10 +479,10 @@ def init_app(request):
 
     except (UserBadRequest, ContactNotFound) as e:
         return Response({"error": "Bad Request", "message": str(e)}, status=400)
-    # except Exception as e:
-    #     return Response(
-    #         {"error": "Internal Server Error", "message": e.args}, status=500
-    #     )
+    except Exception as e:
+        return Response(
+            {"error": "Internal Server Error", "message": e.args}, status=500
+        )
 
 
 @api_view(["GET"])

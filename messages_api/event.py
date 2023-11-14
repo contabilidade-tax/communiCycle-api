@@ -49,8 +49,12 @@ def manage(data):
         "ticket.updated": (handle_ticket_updated, ["id"]),
     }
     # Aqui eu consigo filtrar os eventos que serão mandados para background
-    event_will_apply_async = [handle_message_created, handle_ticket_created]
-    # event_will_apply_async = []
+    event_will_apply_async = [
+        handle_message_created,
+        handle_ticket_created,
+        handle_message_updated,
+        handle_ticket_updated,
+    ]
     #
     event = data.get("event")
     data = data.get("data")
@@ -88,7 +92,8 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
     obs = ""
     #
     if message_exists and message_saved:
-        handle_message_updated(message_id, data=data)
+        # handle_message_updated(message_id, data=data)
+        handle_message_updated.apply_async(args=[message_id], kwargs={"data": data})
         return "Mensagem já existe mandada pra atualização"
     #
     contact_id = data.get("contactId")
