@@ -137,7 +137,7 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
         check_client_response.apply_async(args=[contact_id])  # .get(contact_id)
 
     # Pega no digisac o id da ultima mensagem criada
-    update_ticket_last_message(ticket_id=data.get("ticketId"))
+    update_ticket_last_message.apply_async(args=[data.get("ticketId")])
     # except Exception as e:
     #     raise ObjectNotCreated(
     #         f"Failed to create message_id: {message_id} reason: \n{e}"

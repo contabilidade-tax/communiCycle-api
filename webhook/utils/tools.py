@@ -5,6 +5,7 @@ from datetime import datetime as dt
 from datetime import timedelta
 from typing import Union
 
+from celery import shared_task
 from dotenv import load_dotenv
 from httpx import Client, get
 
@@ -134,6 +135,7 @@ def get_event_status(event, message_id: str = None, ticket_id: str = None):
         return message.status if message else 0
 
 
+@shared_task(name="update_ticket_last_message")
 def update_ticket_last_message(ticket_id: str):
     response = any_digisac_request(f"/tickets/{ticket_id}", method="get", json=False)
 

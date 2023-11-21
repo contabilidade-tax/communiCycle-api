@@ -29,7 +29,7 @@ class Message(models.Model):
     retries = models.IntegerField(default=0)
 
     def __str__(self) -> str:
-        return f"{self.message_id} - {self.period} - {self.status}"
+        return f"{self.contact_number} - {self.status} - {self.ticket} - {self.text}"
 
     class Meta:
         unique_together = (("contact_id", "message_id"),)
