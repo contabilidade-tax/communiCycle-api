@@ -21,18 +21,20 @@ jobs:
               run: docker login -u ${{secrets.DOCKER_USERNAME}} -p ${{secrets.DOCKER_PASSWORD}}
 
             - name: Build docker image
-              run: docker build -t programacaotax/communiCycle-api . 
+
+              run: docker build -t programacaotax/communicycle-api . 
 
             - name: Push image docker
-              run: docker push programacaotax/communiCycle-api
+              run: docker push programacaotax/communicycle-api
               
     deploy:
         needs: build
         runs-on: self-hosted
         steps:
             - name: Pull image from docker hub
-              run: docker pull programacaotax/communiCycle-api:latest
+              run: docker pull programacaotax/communicycle-api:latest
             - name: Remove docker container
-              run: docker rm -f communiCycle-api
+              run: docker rm -f communicycle-api
             - name: Run docker container
-              run: docker run -d -p 0.0.0.0:${{secrets.API_PORT}}:${{secrets.API_PORT}} -p 0.0.0.0:5055:5055 -e API_PORT=${{secrets.API_PORT}} -e DB_NAME=${{secrets.DB_NAME}} -e DB_USER=${{secrets.DB_USER}} -e DB_PASS='${{secrets.DB_PASS}}' -e DB_HOST=${{secrets.DB_HOST}} --name communiCycle-api --hostname docker programacaotax/communiCycle-api
+              run: docker run -d -p 0.0.0.0:${{secrets.API_PORT}}:${{secrets.API_PORT}} -p 0.0.0.0:5055:5055 -e API_PORT=${{secrets.API_PORT}} -e DB_NAME=${{secrets.DB_NAME}} -e DB_USER=${{secrets.DB_USER}} -e DB_PASS='${{secrets.DB_PASS}}' -e DB_HOST=${{secrets.DB_HOST}} --name communicycle-api --hostname docker programacaotax/communicycle-api
+
