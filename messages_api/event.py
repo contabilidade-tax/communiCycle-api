@@ -33,7 +33,9 @@ def load_env(var):
 
 
 IS_LOCALHOST = load_env("IS_LOCALHOST")
-WEBHOOK_API = load_env("WEBHOOK_API_LOCAL") if IS_LOCALHOST else load_env("WEBHOOK_API")
+CYCLE_API_URL = (
+    load_env("CYCLE_API_LOCAL_URL") if IS_LOCALHOST else load_env("CYCLE_API_URL")
+)
 
 
 ##-- Handler to events
@@ -187,7 +189,7 @@ def handle_message_updated(message_id, data=...):
 
 @shared_task(name="create_ticket")
 def handle_ticket_created(ticket_id, contact_id, last_message_id, data=...):
-    # url = f"{WEBHOOK_API}/messages/create/ticket"
+    # url = f"{CYCLE_API_URL}/messages/create/ticket"
     ticket_data = {
         "id": ticket_id,
         "period": get_current_period(dtObject=True),

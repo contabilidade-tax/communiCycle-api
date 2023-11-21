@@ -48,7 +48,7 @@ is_local_machine()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 IGNORED_ID_LISTS = ["4bf3c03a-2d33-439c-8b13-efb50531e9c1"]
-COMPANIES_API = os.environ.get("COMPANIES_API", os.getenv("COMPANIES_API"))
+COMPANIES_API = os.environ.get("COMPANIES_API_URL", os.getenv("COMPANIES_API_URL"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.1/howto/deployment/checklist/

@@ -18,11 +18,11 @@ dotenv.load_dotenv()
 max_retries = 3
 att_tax = 0.1
 COMPANIES_API = settings.COMPANIES_API
-WOZ_URL = os.getenv("WOZ_URL")
+ROUTINE_RUNNER_URL = os.getenv("ROUTINE_RUNNER_URL")
 
 
 def get_contact_pendencies(cnpj: str):
-    response = httpx.get(f"{WOZ_URL}/mei/competences", params={"cnpj": cnpj})
+    response = httpx.get(f"{ROUTINE_RUNNER_URL}/mei/competences", params={"cnpj": cnpj})
 
     if response.status_code == 200:
         pendencies = response.json()

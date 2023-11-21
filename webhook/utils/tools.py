@@ -43,12 +43,13 @@ def any_digisac_request(
     url, body=None, method: Union[request_methods, str] = request_methods.get, json=True
 ):
     header = {
-        "Authorization": f"Bearer {os.environ.get('TOKEN_API', os.getenv('TOKEN_API'))}",
+        "Authorization": f"Bearer {os.environ.get('TOKEN_DIGISAC_API', os.getenv('TOKEN_DIGISAC_API'))}",
         "Content-Type": "application/json",
     }
 
     with Client(
-        base_url=os.environ.get("API_URL", os.getenv("API_URL")), headers=header
+        base_url=os.environ.get("DIGISAC_API_URL", os.getenv("DIGISAC_API_URL")),
+        headers=header,
     ) as client:
         if method == "get":
             get_response: get = client.get(url, timeout=6000)
@@ -64,11 +65,13 @@ def any_digisac_request(
 def get_chat_protocol(ticketId):
     try:
         header = {
-            "Authorization": f"Bearer {os.environ.get('TOKEN_API', os.getenv('TOKEN_API'))}",
+            "Authorization": f"Bearer {os.environ.get('TOKEN_DIGISAC_API', os.getenv('TOKEN_DIGISAC_API'))}",
             "Content-Type": "application/json",
         }
 
-        with Client(base_url=os.environ.get("API_URL", os.getenv("API_URL"))) as client:
+        with Client(
+            base_url=os.environ.get("DIGISAC_API_URL", os.getenv("DIGISAC_API_URL"))
+        ) as client:
             response = client.get(f"/tickets/{ticketId}", headers=header)
 
             if response.status_code == 200:
