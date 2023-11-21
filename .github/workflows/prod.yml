@@ -21,6 +21,7 @@ jobs:
               run: docker login -u ${{secrets.DOCKER_USERNAME}} -p ${{secrets.DOCKER_PASSWORD}}
 
             - name: Build docker image
+
               run: docker build -t programacaotax/communicycle-api . 
 
             - name: Push image docker
@@ -36,3 +37,4 @@ jobs:
               run: docker rm -f communicycle-api
             - name: Run docker container
               run: docker run -d -p 0.0.0.0:${{secrets.API_PORT}}:${{secrets.API_PORT}} -p 0.0.0.0:5055:5055 -e API_PORT=${{secrets.API_PORT}} -e DB_NAME=${{secrets.DB_NAME}} -e DB_USER=${{secrets.DB_USER}} -e DB_PASS='${{secrets.DB_PASS}}' -e DB_HOST=${{secrets.DB_HOST}} --name communicycle-api --hostname docker programacaotax/communicycle-api
+
