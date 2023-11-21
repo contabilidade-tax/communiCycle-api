@@ -1,23 +1,20 @@
 import os
-from datetime import datetime as dt
 from datetime import date
-from django.http import HttpRequest
+from datetime import datetime as dt
+
 from django.db import IntegrityError
+from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
-
 from rest_framework import viewsets
-from rest_framework.response import Response
 from rest_framework.decorators import api_view
-from contacts.serializer import PendenciesSerializer
+from rest_framework.response import Response
 
-from webhook.utils.logger import Logger
-from messages_api.models import Ticket
-from contacts.models import Pendencies
+from control.functions import send_message
 from control.models import MessageControl
 from control.serializer import ControlMessageSerializer
-from control.functions import send_message
-
-from webhook.utils.get_objects import get_company_contact
+from messages_api.models import Ticket
+from webhook.utils.get_objects import get_digisac_contact_by_id
+from webhook.utils.logger import Logger
 
 # Create your views here.
 logger = Logger(__name__)
@@ -173,7 +170,7 @@ def create_pendencies_viewset(request: HttpRequest):
             {"error": "Invalid date format. It should be YYYY-MM-DD."}, status=400
         )
 
-    contact = get_company_contact(cnpj=cnpj)
+    contact = get_digisac_contact_by_id(cnpj=cnpj)
     if contact is None:
         return Response({"error": f"No contact found with cnpj: {cnpj}"}, status=404)
 

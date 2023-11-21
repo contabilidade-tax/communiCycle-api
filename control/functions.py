@@ -1,33 +1,34 @@
 import os
 import re
-from datetime import datetime as dt
+from datetime import datetime
 
 from celery import shared_task
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from control.models import DASFileGrouping
-from webhook.utils.get_objects import (
-    get_company_contact,
-    get_contact,
-    get_message_control,
-)
+from webhook.exceptions import ContactNotFound, ObjectNotFound, UserBadRequest
+from webhook.functions.model_obj import create_new_pdf_file
+from webhook.utils.get_objects import (get_all_companies_by_digisac_contact,
+                                       get_company_contact_by_cnpj,
+                                       get_company_name_by_id,
+                                       get_contact_pendencies,
+                                       get_das_grouping,
+                                       get_digisac_contact_by_id,
+                                       get_message_control)
 from webhook.utils.logger import Logger
 from webhook.utils.text import Answers, BaseText
 from webhook.utils.text import TransferTicketReasons as Reasons
-from webhook.utils.tools import (
-    any_digisac_request,
-    get_contact_number,
-    get_current_period,
-    group_das_to_send,
-)
+from webhook.utils.tools import (DictAsObject, any_digisac_request,
+                                 get_contact_number, get_current_period,
+                                 group_das_to_send)
 
 logger = Logger(__name__)
 ## -----
 SAUDACAO_TEXT = BaseText.saudacao.value
 DISCLAIMER_TEXT = BaseText.disclaimer.value
 ## -----
-POSITIVE_RESPONSES = r"\b(sim|bacana|ok|tá|ta|bom|recebi|receb|na\shora|ótimo|beleza|blz|entendi|show|confirmado|confirme|tá\sótimo|massa|s|manda|mande|envia|pode|👍|👍🏾|👍🏻|👍🏼|👍🏿|pode\sser)\b"
+POSITIVE_RESPONSES = r"\b(sim|bacana|ok|tá|ta|bom|recebi|receb|na\shora|ótimo|beleza|blz|entendi|show|confirmado|confirme|tá\sótimo|massa|valeu|s|manda|obrigado|obrigada|mande|envia|pode|👍|👍🏾|👍🏻|👍🏼|👍🏿|pode\sser)\b"
 NEGATIVE_RESPONSES = r"\b(n|nao|pare|parar|stop|não|\?|nada)\b"
 ASSISTANCE_REQUESTS = r"\b(atendente|humano|pessoa|atendimento|atedente|sair|porque|Porque|Por que|por que|Por quê)\b"
 NOT_CHAT_TYPES = r"\b(image|document|sticker)\b"
@@ -72,7 +73,8 @@ def process_input(
     ):
         send_message(contact_id, text=Answers.UNEXPECTED_MESSAGE.value)
         # Alterna o client_needs_help para True para analisar a resposta dele após essa mensagem
-        switch_client_needs_help.apply_async(args=[contact_id, True])
+        # switch_client_needs_help.apply_async(args=[contact_id, True])
+        switch_client_needs_help(contact_id, True)
 
         return "Mensagem não esperada. Troca de canal enviada"
 
@@ -85,13 +87,15 @@ def process_input(
             )
             send_message(contact_id, text=Answers.ASK_FOR_ATTENDANT.value)
             ticket_message = close_ticket.apply_async(args=[contact_id], countdown=30)
-            switch_client_needs_help.apply_async(args=[contact_id, False])
+            # switch_client_needs_help.apply_async(args=[contact_id, False])
+            switch_client_needs_help(contact_id, False)
 
             return f"Troca de canal enviada e {ticket_message}"
 
         elif is_match(sentence, NEGATIVE_RESPONSES, exact_match):
             send_message(contact_id, text=Answers.DONT_NEED_ATTENDANT.value)
-            switch_client_needs_help.apply_async(args=[contact_id, False])
+            # switch_client_needs_help.apply_async(args=[contact_id, False])
+            switch_client_needs_help(contact_id, False)
             confirm_message.apply_async(args=[contact_id])
 
             return "Atendimento inesperado encerrado com sucesso! Cliente não quis atendente"
@@ -109,18 +113,18 @@ def process_input(
         and not chat_confirmed
         and not is_match(sentence, NEGATIVE_RESPONSES, exact_match)
     ):
-        if pendencies:
-            send_message(contact_id, text=Answers.PENDENCIES_SEND_CONFIRMED.value)
-            get_contact_pendencies_and_send.apply_async(args=[contact_id])
-            confirm_message.apply_async(
-                args=[contact_id], kwargs={"closeTicket": False}
-            )
+        # if pendencies:
+        #     send_message(contact_id, text=Answers.PENDENCIES_SEND_CONFIRMED.value)
+        #     get_contact_pendencies_and_send.apply_async(args=[contact_id])
+        #     confirm_message.apply_async(
+        #         args=[contact_id], kwargs={"closeTicket": False}
+        #     )
 
-            return "Cliente solicitou os arquivos"
+        #     return "Cliente solicitou os arquivos"
 
-        else:
-            send_message(contact_id, text=Answers.MESSAGE_CONFIRMED.value)
-            confirm_message.apply_async(args=[contact_id])
+        # else:
+        send_message(contact_id, text=Answers.MESSAGE_CONFIRMED.value)
+        confirm_message.apply_async(args=[contact_id])
 
         return "Atendimento encerrado com sucesso!"
 
@@ -174,10 +178,10 @@ def generate_error_message(retries, pendencies) -> str:
 
 ##-- Manage message states
 def get_control_object(contact_id):
-    contact_number = get_contact_number(contact_id, only_number=True)
-    period = dt.strptime(get_current_period(), "%m/%y").strftime("%Y-%m-%d")
+    # contact_number = get_contact_number(contact_id, only_number=True)
+    period = get_current_period(dtObject=True)
 
-    control = get_message_control(contact=contact_number, period=period)
+    control = get_message_control(digisac_id=contact_id, period=period)
 
     return control
 
@@ -208,16 +212,16 @@ def send_message(contact_id, text="", file=None):
     return any_digisac_request("/messages", body=body, method="post")
 
 
-def send_files(contact_id, pendencie, file):
-    try:
-        send_message(contact_id, text=pendencie, file=file)
-        return Response("Deu certo!")
-    except Exception as e:
-        return Response(f"Deu certo não: {e}")
+# def send_files(contact_id, pendencie, file):
+#     try:
+#         send_message(contact_id, text=pendencie, file=file)
+#         return Response("Deu certo!")
+#     except Exception as e:
+#         return Response(f"Deu certo não: {e}")
 
 
 ##-- Functional tasks to app
-@shared_task(name="client-needs-help")
+# @shared_task(name="client-needs-help")
 def switch_client_needs_help(contact_id, boolean):
     control = get_control_object(contact_id=contact_id)
 
@@ -229,6 +233,9 @@ def switch_client_needs_help(contact_id, boolean):
 @shared_task(name="check_response")
 def check_client_response(contact_id):
     control = get_control_object(contact_id=contact_id)
+
+    if not control:
+        raise ObjectNotFound("MessageControl not found")
 
     # Se a última mensagem é do sistema, então retorna diretamente
     if control.is_from_me_last_message():
@@ -298,113 +305,180 @@ def confirm_message(contact_id, closeTicket=True, timeout=30):
 
 @shared_task(name="transfer-ticket")
 def transfer_ticket(contact_id, motivo=None):
-    contact = get_contact(contact_id=contact_id)
+    contact = get_digisac_contact_by_id(contact_id=contact_id)
+    contact = DictAsObject(contact)
     message_control = get_control_object(contact_id=contact_id)
 
-    motivo_str = f"\n\nMotivo: {motivo}" if motivo is not None else ""
+    motivo_str = f"\n\nMotivo: {motivo}" if motivo else ""
     send_message(
         WOZ_GROUP_ID,
-        text=f"O cliente: {contact.name}\nSOLICITA ATENDIMENTO{motivo_str}\n\nProtocolo: {message_control.get_protocol_number()}",
+        text=f"O cliente: {contact.responsible_name}\nSOLICITA ATENDIMENTO{motivo_str}\n\nProtocolo: {message_control.get_protocol_number()}",
     )
 
     return "Solicitação de atendimento enviada para o grupo WOZ - RELATÓRIOS"
 
 
-@shared_task(name="update_control_pendencies")
-def update_ticket_control_pendencies(contact_id, pendencies):
+# @shared_task(name="update_control_pendencies")
+def update_ticket_control_pendencies(contact_id, has_pendencies):
     control = get_control_object(contact_id=contact_id)
 
-    control.pendencies = pendencies
+    control.pendencies = has_pendencies
     control.save()
 
     return f"Pendencias atualizadas contact_id: {contact_id}"
 
+    # @shared_task(name="send-pendencies")
+    # def get_contact_pendencies_and_send(contact_id):
+    ...
+    # try:
+    #     contact = get_contact(contact_id=contact_id)
+    #     pendencies_list = contact.get_pendencies()
 
-@shared_task(name="send-pendencies")
-def get_contact_pendencies_and_send(contact_id):
-    try:
-        contact = get_contact(contact_id=contact_id)
-        pendencies_list = contact.get_pendencies()
+    #     if len(pendencies_list) > 5:
+    #         send_message(
+    #             contact_id,
+    #             text=Answers.get_text_with_replace(
+    #                 "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
+    #             ),
+    #         )
+    #         transfer_ticket.apply_async(
+    #             args=[contact_id],
+    #             kwargs={
+    #                 "motivo": Reasons.get_text_with_replace(
+    #                     "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
+    #                 )
+    #             },
+    #         )
 
-        if len(pendencies_list) > 5:
-            send_message(
-                contact_id,
-                text=Answers.get_text_with_replace(
-                    "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
-                ),
+    #         return "número de pendencias maior que 5, atendente solicitado"
+
+    #     for pendencie in pendencies_list:
+    #         competence = pendencie.period.strftime("%B/%m")
+    #         send_files(contact.contact_id, competence, pendencie.pdf)
+
+    #     close_ticket.apply_async(args=[contact_id])
+    #     return "pendencias enviadas ao cliente com sucesso"
+    # except Exception as e:
+    #     return e
+
+
+@shared_task(name="process_init_app")
+def process_init_app():
+    ...
+
+
+@shared_task(name="process_grouping_das")
+def process_grouping_das(grouping_id, contact, files_to_send):
+    grouping = get_das_grouping(id=grouping_id)
+    # Variável auxiliar para verificar se o disclaimer deve ser enviado
+    # O disclaimer será enviado se nenhuma das empresas do grupamento
+    # tiver pendencias. Caso contrário, será enviado o texto de pendencias
+    send_disclaimer = True
+    pendencies_for_company = []
+
+    # Inicio do processo de envio
+    send_message(contact, text=SAUDACAO_TEXT)
+    # Envia cada pdf para o contato
+    for name, pdf in files_to_send:
+        send_message(contact, file=pdf, text=name)
+
+    # TODO Verifica se o cnpj do contato tem pendencias e já envia o texto.
+    for company_pdf in grouping.pdfs.all():
+        company_pendencies = get_contact_pendencies(company_pdf.cnpj)
+        if company_pendencies:
+            # Atualiza o controle das pendencias
+            update_ticket_control_pendencies(contact, True)
+            # Seta false 2x porque não pensei em como otimizar ainda
+            send_disclaimer = False
+            #
+            pendencies_for_company.append(
+                rf"*{company_pdf.company_name}*: {', '.join(company_pendencies)}"
             )
-            transfer_ticket.apply_async(
-                args=[contact_id],
-                kwargs={
-                    "motivo": Reasons.get_text_with_replace(
-                        "MORE_THAN_FIVE_PENDENCIES", len(pendencies_list)
-                    )
-                },
-            )
+            #
 
-            return "número de pendencias maior que 5, atendente solicitado"
+    if send_disclaimer:
+        # Envia a mensagem de disclaimer
+        send_message(contact, text=DISCLAIMER_TEXT)
+    else:
+        # Mensagem final que será enviada
+        pendencies_message = BaseText.get_pendencies_text(
+            "\n".join(pendencies_for_company)
+        )
+        # Envia as pendencias para cada empresa
+        send_message(contact, text=pendencies_message)
 
-        for pendencie in pendencies_list:
-            competence = pendencie.period.strftime("%B/%m")
-            send_files(contact.contact_id, competence, pendencie.pdf)
+    # Atualiza que o grupamento já foi enviado esse mês
+    grouping.was_sent = True
+    grouping.save()
 
-        close_ticket.apply_async(args=[contact_id])
-        return "pendencias enviadas ao cliente com sucesso"
-    except Exception as e:
-        return e
+    return f"Enviado para {contact}"
 
 
+# TODO PENDENCIES IN WOZ
 ##-- Addtional views
 @api_view(["GET"])
 def init_app(request):
     try:
+        #
+        file = request.data.get("pdf")
+        #
         cnpj = request.query_params.get("cnpj")
-        company_contact = get_company_contact(cnpj=cnpj)
+        company_contact = DictAsObject(get_company_contact_by_cnpj(cnpj=cnpj))
+        digisac_contact = DictAsObject(company_contact.digisac_contact)
+        company_name = DictAsObject(
+            get_company_name_by_id(company_contact.company)
+        ).fantasy_name
+        # AGORA Pego quantas empresas o contato tem atrelado a ele
+        companies_by_contact = get_all_companies_by_digisac_contact(
+            digisac_contact.digisac_id
+        )
+        # TODO
+        company_pendencies = get_contact_pendencies(cnpj)
 
         if not company_contact:
-            raise FileNotFoundError("Company Contact não existe")
+            raise ObjectNotFound("Company Contact não existe")
+        if not file:
+            raise UserBadRequest("Cadê o pdf em base 64?")
 
-        pendencies_list = company_contact.get_pendencies()
-
-        file = request.data.get("pdf")
-        company_contact.pdf = file
-        company_contact.save()
-
-        reduce = request.query_params.get("reduce")
-        if reduce:
-            reduce = int(reduce)
-            if reduce == 0:
-                pendencies_list = None
-
-            pendencies_list = pendencies_list[:reduce]
-
-        if len(company_contact.contact.company_contacts.all()) > 1:
-            group_das_to_send(
-                company_contact.contact, company_contact, get_current_period(dtime=True)
+        if len(companies_by_contact) > 1:
+            grouping = group_das_to_send(
+                digisac_contact.digisac_id,
+                cnpj,
+                get_current_period(dtime=True),
             )
+            pdf_file = create_new_pdf_file(cnpj, company_name, file, grouping)
+
             return Response({"success": "Contato responsável por mais de uma empresa"})
 
-        send_message(company_contact.contact.contact_id, text=SAUDACAO_TEXT)
-        send_message(company_contact.contact.contact_id, file=file)
+        ###Ínicio do envio das mensagens que deverá ser assíncrono
+        send_message(digisac_contact.digisac_id, text=SAUDACAO_TEXT)
+        send_message(digisac_contact.digisac_id, file=file)
 
-        if pendencies_list:
-            pendencies_text = [
-                pendencies.period.strftime("%B/%Y") for pendencies in pendencies_list
-            ]
+        # CASO TENHA PENDENCIAS ELE ENVIA A MENSAGEM DE PENDENCIAS
+        if company_pendencies:
             pendencies_message = BaseText.get_pendencies_text(
-                ", ".join(pendencies_text)
+                ", ".join(company_pendencies)
             )
 
-            send_message(company_contact.contact_id, text=pendencies_message)
-            update_ticket_control_pendencies.apply_async(
-                args=[company_contact.contact_id, True]
-            )
-        else:
-            send_message(company_contact.contact_id, text=DISCLAIMER_TEXT)
+            send_message(digisac_contact.digisac_id, text=pendencies_message)
+            # Informa ao controle das mensagens que tem pendencias
+            update_ticket_control_pendencies(digisac_contact.digisac_id, True)
+            # update_ticket_control_pendencies.apply_async(
+            #     args=[digisac_contact.digisac_id, True]
+            # )
+            return Response({"success": "message_sent with pendencies"})
+        ###
 
+        # CASO NÃO TENHA PENDENCIAS ELE ENVIA A DISCLAIMER
+        send_message(digisac_contact.digisac_id, text=DISCLAIMER_TEXT)
         return Response({"success": "message_sent"})
+
+    except (UserBadRequest, ContactNotFound) as e:
+        return Response({"error": "Bad Request", "message": str(e)}, status=400)
     except Exception as e:
-        return Response({"error": str(e)}, status=500)
+        return Response(
+            {"error": "Internal Server Error", "message": e.args}, status=500
+        )
 
 
 @api_view(["GET"])
@@ -415,24 +489,17 @@ def send_groupinf_of_das(request):
     if grouping_list:
         for grouping in grouping_list:
             files_to_send = [
-                (company.company_name, company.pdf)
-                for company in grouping.companies.all()
+                (pdf_file_grouping.company_name, pdf_file_grouping.file)
+                for pdf_file_grouping in grouping.pdfs.all()
             ]
-            contact = grouping.contact
-
-            send_message(contact.contact_id, text=SAUDACAO_TEXT)
-            for name, pdf in files_to_send:
-                send_message(contact.contact_id, file=pdf, text=f"{name}")
-
-            send_message(contact.contact_id, text=DISCLAIMER_TEXT)
-
-            # Atualiza que o grupamento já foi enviado esse mês
-            grouping.was_sent = True
-            grouping.save()
+            contact = grouping.contact_id
+            # Enviando os arquivos para o contato
+            process_grouping_das.apply_async(args=[grouping.id, contact, files_to_send])
+            # process_grouping_das(grouping.id, contact, files_to_send)
 
         return Response(
             {
-                "success": f"{len(grouping_list)} contatos responsáveis por mais que uma empresa receberam os arquivos"
+                "success": f"{len(grouping_list)} contatos responsáveis por mais que uma empresa receberão os arquivos. Por favor, aguarde o fim da tarefa de envio..."
             }
         )
 
@@ -440,32 +507,34 @@ def send_groupinf_of_das(request):
         {
             "info": "Nenhum agrupamento de DAS esse mês ou todos que existem já foram enviados"
         },
-        status=500,
+        status=200,
     )
 
 
-@api_view(["POST"])
+@api_view(["GET"])
 def send_message_to_client(request):
-    contact_number = request.query_params.get("phone")
-    text = request.data.get("text")
-    contact = get_contact(contact_number=contact_number)
+    try:
+        cnpj = request.query_params.get("cnpj")
+        text = request.query_params.get("text")
+        contact = DictAsObject(get_company_contact_by_cnpj(cnpj=cnpj))
+        digisac_contact = DictAsObject(contact.digisac_contact)
 
-    text = (
-        """
-Empresários: Descubra a Nova Linha de Crédito do Pronamp! 🚀💼 
+        if not text:
+            raise UserBadRequest("Cadê o texto da mensagem moral?")
+        # Envia
+        send_message(digisac_contact.digisac_id, text=text)
+        # Em seguida fecha o ticket
+        close_ticket.apply_async(args=[digisac_contact.digisac_id], countdown=25)
+        #
+        return Response(
+            {
+                "success": f"Mensagem enviada com sucesso para: {digisac_contact.contact_number} - {digisac_contact.digisac_id}"
+            },
+            status=200,
+        )
 
-💰📈 Clique no link e saiba como impulsionar seu negócio com essa oportunidade única! 
-🌟 #Pronamp #LinhaDeCrédito #Empresários #OportunidadeDeCrescimento
-
-https://www.instagram.com/p/Cu-UcmTJwXR/
-"""
-        if not text
-        else text
-    )
-
-    send_message(contact.contact_id, text=text)
-
-    return Response(f"Mensagem enviada com sucesso para: {contact_number}")
+    except UserBadRequest as e:
+        return Response({"error": "Bad Request", "message": str(e)}, status=400)
 
 
 @api_view(["GET"])
@@ -480,16 +549,28 @@ def check_visualized(request):
         companies_not_confirmed = []
 
         for mc in message_control_list:
-            contact = get_contact(contact_number=mc.contact)
-            company_contacts = contact.company_contacts.all()
-            companies = [
-                f"{company_contact.cnpj} - {company_contact.company_name}"
-                for company_contact in company_contacts
+            # contact = get_digisac_contact_by_id(contact_id=mc.contact_id)
+            # Pega a lista com dicionários das empresas
+            company_contacts = get_all_companies_by_digisac_contact(
+                digisac_id=mc.digisac_id
+            )
+            # converte cada empresa em "objeto" pra poder acessar os atributos
+            company_contacts = [
+                DictAsObject(company_obj) for company_obj in company_contacts
             ]
+            # Pega os nomes e cnpj das empresas
+            # usando os obj dentro do array anterior
+            companies = []
+            for company_contact_data in company_contacts:
+                company = DictAsObject(company_contact_data.company)
+                contact = DictAsObject(company_contact_data.contact)
+                # Então adiciono ao array contendo os dados do contato
+                # nome e cnpj
+                companies.append(f"{company.fantasy_name}-{company.cnpj_cpf}")
 
             confirm_message.apply_async(
                 kwargs={
-                    "contact_id": contact.contact_id,
+                    "contact_id": mc.digisac_id,
                     "closeTicket": True,
                     "timeout": 30,
                 }
@@ -498,7 +579,8 @@ def check_visualized(request):
             mc.status = 1
             mc.save()
 
-            companies_not_confirmed += companies  # Apenas adicione as empresas à lista
+            # Apenas adicione as empresas à lista geral
+            companies_not_confirmed += companies
 
         # Início da mensagem
         report_message = "MEI's SEM CONFIRMAÇÃO DE RECEBIMENTO DAS:\n\n"  # Dois espaços em branco após a frase inicial
@@ -523,6 +605,8 @@ def check_visualized(request):
         # Aumenta o contador de checagem
         mc.check_count += 1
 
+        # Se a mensagem enviada foi visualizada, fecha o ticket
+        # e encerra o atendimento do contato
         if mc.last_message_visualized():
             message_controls_visualized.append(mc)
         else:
@@ -531,18 +615,16 @@ def check_visualized(request):
     # Agora, message_controls_visualized contém os objetos onde last_message_visualized é True
     # e message_controls_not_visualized contém os objetos onde last_message_visualized é False
     for mc in message_controls_visualized:
-        contact = get_contact(contact_number=mc.contact)
         confirm_message.apply_async(
             kwargs={
-                "contact_id": contact.contact_id,
+                "contact_id": mc.digisac_id,
                 "closeTicket": True,
                 "timeout": 30,
             }
         )
     for mc in message_controls_not_visualized:
-        contact = get_contact(contact_number=mc.contact)
         send_message(
-            contact.contact_id,
+            mc.digisac_id,
             text="Olá, preciso que visualize ou confirme a mensagem para encerrar este envio.",
         )
 

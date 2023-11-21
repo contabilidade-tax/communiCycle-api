@@ -1,10 +1,15 @@
+import enum
 import os
 import socket
-from httpx import get, Client
-from datetime import datetime as dt, timedelta
-from dotenv import load_dotenv
+from datetime import datetime as dt
+from datetime import timedelta
+from typing import Union
 
-from webhook.utils.get_objects import get_ticket, get_message
+from celery import shared_task
+from dotenv import load_dotenv
+from httpx import Client, get
+
+from webhook.utils.get_objects import get_digisac_contact_by_id, get_message, get_ticket
 from webhook.utils.logger import Logger
 
 load_dotenv()
@@ -12,22 +17,45 @@ load_dotenv()
 
 logger = Logger(__name__)
 
+IGNORED_ID_LISTS = ["4bf3c03a-2d33-439c-8b13-efb50531e9c1"]
+
+
+class request_methods(enum.Enum):
+    get = "get"
+    post = "post"
+
+
+def get_digisac_ticket(ticket_id):
+    response = any_digisac_request(f"/tickets/{ticket_id}", method="get", json=False)
+
+    if response.status_code == 200:
+        response_dict = {}
+        ticket = response_dict.json()
+
+        response_dict["ticket_id"] = ticket_id
+        response_dict["period"] = get_current_period(dtObject=True)
+        response_dict["contact_id"] = ticket["contactId"]
+        response_dict["last_message_id"] = ticket["lastMessageId"]
+
 
 ##-- Digisac requests
-def any_digisac_request(url, body=None, method=get, json=True):
+def any_digisac_request(
+    url, body=None, method: Union[request_methods, str] = request_methods.get, json=True
+):
     header = {
-        "Authorization": f"Bearer {os.environ.get('TOKEN_API', os.getenv('TOKEN_API'))}",
+        "Authorization": f"Bearer {os.environ.get('TOKEN_DIGISAC_API', os.getenv('TOKEN_DIGISAC_API'))}",
         "Content-Type": "application/json",
     }
 
     with Client(
-        base_url=os.environ.get("API_URL", os.getenv("API_URL")), headers=header
+        base_url=os.environ.get("DIGISAC_API_URL", os.getenv("DIGISAC_API_URL")),
+        headers=header,
     ) as client:
         if method == "get":
-            get_response: get = client.get(url)
+            get_response: get = client.get(url, timeout=6000)
             return get_response.json() if json else get_response
         if method == "post":
-            response = client.post(url, json=body)
+            response = client.post(url, json=body, timeout=6000)
             if response.status_code == 200:
                 return response.json() if json else response
             else:
@@ -37,11 +65,13 @@ def any_digisac_request(url, body=None, method=get, json=True):
 def get_chat_protocol(ticketId):
     try:
         header = {
-            "Authorization": f"Bearer {os.environ.get('TOKEN_API', os.getenv('TOKEN_API'))}",
+            "Authorization": f"Bearer {os.environ.get('TOKEN_DIGISAC_API', os.getenv('TOKEN_DIGISAC_API'))}",
             "Content-Type": "application/json",
         }
 
-        with Client(base_url=os.environ.get("API_URL", os.getenv("API_URL"))) as client:
+        with Client(
+            base_url=os.environ.get("DIGISAC_API_URL", os.getenv("DIGISAC_API_URL"))
+        ) as client:
             response = client.get(f"/tickets/{ticketId}", headers=header)
 
             if response.status_code == 200:
@@ -53,9 +83,8 @@ def get_chat_protocol(ticketId):
 
 ##--Contact utils
 def get_contact_number(contact_id: str, only_number=False):
-    from webhook.utils.get_objects import get_contact
-
-    contact = get_contact(contact_id=contact_id)
+    contact = get_digisac_contact_by_id(contact_id=contact_id)
+    contact = DictAsObject(contact)
 
     if contact:
         if not only_number:
@@ -66,7 +95,7 @@ def get_contact_number(contact_id: str, only_number=False):
     return None
 
 
-def get_current_period(file_name=False, dtime=False) -> str:
+def get_current_period(file_name=False, dtime=False, dtObject=False) -> str:
     if file_name:
         return (
             (dt.today().replace(day=1) - timedelta(days=1))
@@ -76,6 +105,9 @@ def get_current_period(file_name=False, dtime=False) -> str:
 
     if dtime:
         return dt.today()
+
+    if dtObject:
+        return dt.now().date().strftime("%Y-%m-%d")
 
     return dt.today().strftime("%m/%y")
 
@@ -106,6 +138,7 @@ def get_event_status(event, message_id: str = None, ticket_id: str = None):
         return message.status if message else 0
 
 
+@shared_task(name="update_ticket_last_message")
 def update_ticket_last_message(ticket_id: str):
     response = any_digisac_request(f"/tickets/{ticket_id}", method="get", json=False)
 
@@ -122,7 +155,7 @@ def update_ticket_last_message(ticket_id: str):
 
             return "Show Papai. Atualizado!!"
         except Exception as e:
-            raise ValueError(f"Algo de errado não está certo - {ticket_id}/{str(e)}")
+            raise ValueError(f"Algo de errado não está certo - {e}")
 
     return "Nada foi feito! Ticket provavelmente ainda não foi criado"
 
@@ -136,7 +169,7 @@ def message_exists_in_digisac(message_id):
         return False
 
 
-def message_is_saved(message_id) -> bool:
+def message_is_already_saved(message_id) -> bool:
     # Esse método retorna None se não encontrar o objeto, logo num if qualquer resposta
     # não deverá ter problema
     message = get_message(message_id=message_id)
@@ -144,11 +177,19 @@ def message_is_saved(message_id) -> bool:
     return True if message else False
 
 
-def group_das_to_send(contact, company_contact, period):
+def group_das_to_send(contact_id: str, companie: str, period):
     from control.models import DASFileGrouping
 
     grouping, created = DASFileGrouping.objects.get_or_create(
-        contact=contact, period=period
+        contact_id=contact_id, period=period
     )
 
-    grouping.append_new_companie(company_contact)
+    grouping.append_new_companie(companie)
+    return grouping
+
+
+class DictAsObject:
+    def __init__(self, dictionary):
+        for key in dictionary:
+            # Aqui garantimos que somente as chaves existentes no dicionário sejam atribuídas
+            setattr(self, key, dictionary[key])
