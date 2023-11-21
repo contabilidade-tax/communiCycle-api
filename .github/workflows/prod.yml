@@ -7,6 +7,7 @@ on:
 jobs:
     build:
         runs-on: ubuntu-latest
+      
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -16,23 +17,22 @@ jobs:
               with:
                 python-version: '3.10'
 
-            # - name: Build project
-            #   run: mvn clean install -DskipTests
-
             - name: Login Docker Hub
               run: docker login -u ${{secrets.DOCKER_USERNAME}} -p ${{secrets.DOCKER_PASSWORD}}
+
             - name: Build docker image
-              run: docker build -t programacaotax/$GITHUB_REPOSITORY .
+              run: docker build -t programacaotax/communiCycle-api . 
+
             - name: Push image docker
-              run: docker push programacaotax/$GITHUB_REPOSITORY
+              run: docker push programacaotax/communiCycle-api
               
     deploy:
         needs: build
         runs-on: self-hosted
         steps:
             - name: Pull image from docker hub
-              run: docker pull programacaotax/$GITHUB_REPOSITORY:latest
+              run: docker pull programacaotax/communiCycle-api:latest
             - name: Remove docker container
-              run: docker rm -f $GITHUB_REPOSITORY
+              run: docker rm -f communiCycle-api
             - name: Run docker container
-              run: docker run -d -p 0.0.0.0:${{secrets.API_PORT}}:${{secrets.API_PORT}} -p 0.0.0.0:5055:5055 -e API_PORT=${{secrets.API_PORT}} -e DB_NAME=${{secrets.DB_NAME}} -e DB_USER=${{secrets.DB_USER}} -e DB_PASS='${{secrets.DB_PASS}}' -e DB_HOST=${{secrets.DB_HOST}} --name $GITHUB_REPOSITORY --hostname docker programacaotax/$GITHUB_REPOSITORY
+              run: docker run -d -p 0.0.0.0:${{secrets.API_PORT}}:${{secrets.API_PORT}} -p 0.0.0.0:5055:5055 -e API_PORT=${{secrets.API_PORT}} -e DB_NAME=${{secrets.DB_NAME}} -e DB_USER=${{secrets.DB_USER}} -e DB_PASS='${{secrets.DB_PASS}}' -e DB_HOST=${{secrets.DB_HOST}} --name communiCycle-api --hostname docker programacaotax/communiCycle-api
