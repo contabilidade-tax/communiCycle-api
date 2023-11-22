@@ -6,24 +6,18 @@ from django.db.utils import IntegrityError
 from control.functions import check_client_response
 from messages_api.views import get_valid_ticket
 from webhook.exceptions import DigisacBugException
-from webhook.functions.model_obj import (
-    create_new_message,
-    create_new_message_control,
-    create_new_ticket,
-)
-from webhook.utils.get_objects import get_message, get_message_control, get_ticket
+from webhook.functions.model_obj import (create_new_message,
+                                         create_new_message_control,
+                                         create_new_ticket)
+from webhook.utils.get_objects import (get_message, get_message_control,
+                                       get_ticket)
 from webhook.utils.logger import Logger
-from webhook.utils.tools import (
-    IGNORED_ID_LISTS,
-    DictAsObject,
-    any_digisac_request,
-    get_contact_number,
-    get_current_period,
-    get_event_status,
-    message_exists_in_digisac,
-    message_is_already_saved,
-    update_ticket_last_message,
-)
+from webhook.utils.tools import (IGNORED_ID_LISTS, DictAsObject,
+                                 any_digisac_request, get_contact_number,
+                                 get_current_period, get_event_status,
+                                 message_exists_in_digisac,
+                                 message_is_already_saved,
+                                 update_ticket_last_message)
 
 logger = Logger(__name__)
 
@@ -129,17 +123,22 @@ def handle_message_created(message_id, isFromMe: bool, data=...):
     # response = requests.post(url, json=message_body, params=parameters)
 
     try:
-        message = create_new_message(**message_data)
+        if not isFromMe:
+            # 
+            message = create_new_message(**message_data)
+            # 
+            if message:
+                # Agora atualiza primeiro o last_message_id
+                update_ticket_last_message(data.get("ticketId"))
+                # Depois checa a mensagem recebida no last_message_id do ticket atual
+                check_client_response.apply_async(args=[contact_id])
+                # 
     except IntegrityError as e:
         return f"Mensagem criada anteriormente. id:{message_id}"
     except DigisacBugException as e:
         return str(e)
     #
-    if not isFromMe:
-        check_client_response.apply_async(args=[contact_id])  # .get(contact_id)
 
-    # Pega no digisac o id da ultima mensagem criada
-    update_ticket_last_message.apply_async(args=[data.get("ticketId")])
     # except Exception as e:
     #     raise ObjectNotCreated(
     #         f"Failed to create message_id: {message_id} reason: \n{e}"
